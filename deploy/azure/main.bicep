@@ -74,7 +74,9 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
       healthCheckPath: '/_stcore/health'
       ipSecurityRestrictionsDefaultAction: 'Deny'
       scmIpSecurityRestrictionsDefaultAction: 'Deny'
-      scmIpSecurityRestrictionsUseMain: false
+      // SCM/Kudu is the deployment endpoint. Reuse the same approved network allowlist.
+      // The deploy runner must therefore execute inside an allowed corporate/VPN egress range.
+      scmIpSecurityRestrictionsUseMain: true
       ipSecurityRestrictions: [for (cidr, i) in allowedCidrs: {
         name: 'allow-${i}'
         priority: 100 + i
