@@ -1,6 +1,7 @@
-from datetime import date
+﻿from datetime import date
 from io import BytesIO
 import os
+import time
 from pathlib import Path
 import sqlite3
 from zipfile import BadZipFile
@@ -44,28 +45,94 @@ def isolate_external_operational_sources(monkeypatch, tmp_path):
         monkeypatch.delenv(variable, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def isolate_background_work(monkeypatch):
+    """Evita el proceso de calentamiento externo y la caché compartida entre tests."""
+    import streamlit as st
+    import subprocess
+
+    st.cache_resource.clear()
+
+    def fake_popen(args, *_, **__):
+        # El calentamiento real arranca otro intérprete; aquí solo libera su marcador.
+        Path(args[3]).unlink(missing_ok=True)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    yield
+    st.cache_resource.clear()
+
+
+def _picker(app):
+    return next(s for s in app.selectbox if str(s.key).startswith("vision_access_picker::"))
+
+
+def _enter_button(app):
+    return next(b for b in app.button if str(b.key).startswith("vision_access_enter::"))
+
+
+def _settle(app, attempts=80):
+    """Repite la ejecución hasta que la precarga publica un estado final."""
+    for _ in range(attempts):
+        try:
+            job = app.session_state["_vision_last_preload_job_v12"]
+        except KeyError:
+            job = None
+        status = job.status() if job is not None else None
+        if status is not None and (
+            status["phase"] == "error"
+            or (status["phase"] == "ready" and status["ingested"])
+        ):
+            return app.run(timeout=60)
+        time.sleep(0.1)
+        app.run(timeout=60)
+    raise AssertionError("La precarga no terminó a tiempo")
+
+
+def _enter_access(app, label, settle=True):
+    _picker(app).set_value(label).run(timeout=60)
+    _enter_button(app).click().run(timeout=60)
+    return _settle(app) if settle else app
+
+
 def _enter_as(app, commercial):
-    app.button(key="role_commercial").click().run(timeout=60)
-    app.selectbox(key="commercial_owner_picker").set_value(commercial).run(timeout=60)
-    app.button(key="enter_vision").click().run(timeout=60)
-    return app
+    return _enter_access(app, commercial)
 
 
-def test_initial_screen_asks_for_role_and_hides_data_administration():
+def _fake_folder_sync(monkeypatch, added=0):
+    """Sustituye la conciliación PROOF y devuelve las llamadas registradas."""
+    from vision import folder_sync
+
+    calls = []
+
+    def synchronize_folder(database, directory, backup):
+        calls.append((str(database), str(directory), str(backup)))
+        return {
+            "status": "synchronized" if added else "up_to_date",
+            "added": added,
+            "backup": None,
+            "message": "synthetic",
+        }
+
+    monkeypatch.setattr(folder_sync, "synchronize_folder", synchronize_folder)
+    return calls
+
+
+def _text(app):
+    return "\n".join(item.value for item in app.markdown)
+
+
+def test_initial_screen_asks_who_signs_in_and_hides_data_administration():
     app = AppTest.from_file(str(APP_FILE)).run(timeout=60)
 
     assert not app.exception
-    assert any("¿Cómo vas a utilizar VISION?" in item.value for item in app.markdown)
-    assert app.button(key="role_commercial").disabled
-    assert app.button(key="role_Taller").label == "Próximamente"
-    assert app.button(key="role_Taller").disabled
-    assert app.button(key="role_o2c").disabled
-    assert "role_Logística" not in [b.key for b in app.button]
-    assert "role_Backoffice" not in [b.key for b in app.button]
-    assert app.toggle[0].label == "Administración / Datos"
-    assert not app.segmented_control
+    assert "Bienvenido a <b>VISION</b>" in _text(app)
+    assert "¿Quién va a iniciar sesión?" in _text(app)
+    assert _picker(app).options == ["O2C", "Administrator"]
+    assert _enter_button(app).disabled
     assert not app.file_uploader
+    assert not app.segmented_control
     assert not app.pills
+    assert not app.toggle
 
 
 def test_commercial_workspace_filters_owner_and_clients_using_lion():
@@ -186,35 +253,32 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
         proof_calls.append(path)
         return history
 
-    ingestion_calls = []
-
-    def ingest_snapshot(*args):
-        ingestion_calls.append(args)
-        return {"status": "registered"}
+    ingestion_calls = _fake_folder_sync(monkeypatch)
 
     monkeypatch.setattr(lion_adapter, "process_workbook", process_workbook)
     monkeypatch.setattr(proof, "read_history", read_history)
-    monkeypatch.setattr(daily_ingestion, "ingest_proof_snapshot", ingest_snapshot)
 
     app = AppTest.from_file(str(APP_FILE)).run(timeout=60)
 
+    # La portada no procesa datos: LION y PROOF se preparan solo tras entrar.
+    assert not app.exception
+    assert lion_calls == []
+    assert _picker(app).options == ["O2C", "Administrator"]
+    app = _enter_access(app, "O2C")
     assert not app.exception
     assert len(lion_calls) == 1
     assert lion_calls[0][0] == synthetic_sap_xlsx
-    assert ingestion_calls[0][0] == str(proof_database.resolve())
-    assert ingestion_calls[0][2:] == (sap_file.name, "2026-10-27")
+    assert len(ingestion_calls) == 1
+    assert Path(ingestion_calls[0][0]).resolve() == proof_database.resolve()
+    assert Path(ingestion_calls[0][1]).resolve() == sap_file.parent.resolve()
     assert proof_calls == [str(proof_database.resolve())]
-    app.button(key="role_commercial").click().run(timeout=60)
-    assert app.selectbox(key="commercial_owner_picker").options == [
-        "Comercial A",
-        "Comercial B",
-    ]
-    assert app.button(key="enter_vision").disabled
+    app.button(key="change_profile").click().run(timeout=60)
+    assert _picker(app).options == ["Comercial A", "Comercial B", "O2C", "Administrator"]
+    assert _enter_button(app).disabled
     assert not app.file_uploader
     assert not app.date_input
 
-    app.selectbox(key="commercial_owner_picker").set_value("Comercial A").run(timeout=60)
-    app.button(key="enter_vision").click().run(timeout=60)
+    app = _enter_access(app, "Comercial A")
     assert not app.exception
     rendered_markdown = "\n".join(item.value for item in app.markdown)
     assert "Situación actual · LION" in rendered_markdown
@@ -231,7 +295,7 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
 
     app.button(key="change_profile").click().run(timeout=60)
     assert not app.exception
-    assert any("¿Cómo vas a utilizar VISION?" in item.value for item in app.markdown)
+    assert "¿Quién va a iniciar sesión?" in _text(app)
     assert len(lion_calls) == 1
     app = _enter_as(app, "Comercial B")
     assert app.selectbox(key="commercial_client").options[0] == "Todos los clientes"
@@ -243,30 +307,22 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
     workbook.save(updated)
     workbook.close()
     sap_file.write_bytes(updated.getvalue())
-    app.run()
+    app.run(timeout=60)
+    app = _settle(app)
     assert not app.exception
     assert len(lion_calls) == 2
-    assert len(proof_calls) == 1
+    proof_reads = len(proof_calls)
 
-    app.toggle[0].set_value(True).run()
+    app.toggle(key="admin_data_mode").set_value(True).run(timeout=60)
     assert not app.exception
     assert len(lion_calls) == 2
-    assert len(proof_calls) == 1
+    assert len(proof_calls) == proof_reads
     displayed_text = "\n".join(
-        item.value
-        for collection in (
-            app.caption,
-            app.info,
-            app.success,
-            app.warning,
-            app.error,
-        )
-        for item in collection
+        item.value for collection in (app.caption, app.error) for item in collection
     )
-    assert sap_file.name in displayed_text
-    assert "Base de datos: OK" in displayed_text
-    assert "NUEVO REGISTRADO" in displayed_text
-    assert str(tmp_path) not in displayed_text
+    assert any("control de fechas" in item.value for item in app.subheader)
+    assert "Base PROOF: " in displayed_text
+    assert "No se pudo conciliar el inventario de archivos" in displayed_text
 
 
 def test_manager_scopes_workspace_by_delegation_and_optional_commercial(
@@ -318,19 +374,23 @@ def test_manager_scopes_workspace_by_delegation_and_optional_commercial(
     history = {"sources": [], "dates": [], "observations": [], "events": [], "instances": []}
     monkeypatch.setattr(lion_adapter, "process_workbook", process_workbook)
     monkeypatch.setattr(proof, "read_history", lambda path: history)
-    monkeypatch.setattr(
-        daily_ingestion, "ingest_proof_snapshot", lambda *a: {"status": "registered"}
-    )
+    _fake_folder_sync(monkeypatch)
 
     app = AppTest.from_file(str(APP_FILE)).run(timeout=60)
-    assert not app.button(key="role_manager").disabled
-    app.button(key="role_manager").click().run(timeout=60)
-    assert app.selectbox(key="delegation_picker").options == [
-        "Delegación X",
-        "Delegación Y",
+    assert not app.exception
+    # El catálogo de accesos se publica tras la primera preparación de datos.
+    app = _enter_access(app, "O2C")
+    app.button(key="change_profile").click().run(timeout=60)
+    assert _picker(app).options == [
+        "Comercial A",
+        "Comercial B",
+        "Comercial C",
+        "Delegación X Manager",
+        "Delegación Y Manager",
+        "O2C",
+        "Administrator",
     ]
-    app.selectbox(key="delegation_picker").set_value("Delegación X").run(timeout=60)
-    app.button(key="enter_vision").click().run(timeout=60)
+    app = _enter_access(app, "Delegación X Manager")
     assert not app.exception
 
     assert app.selectbox(key="manager_commercial::Delegación X").options == [
@@ -381,7 +441,7 @@ def test_manager_scopes_workspace_by_delegation_and_optional_commercial(
     ).run(timeout=60)
 
     app.button(key="change_profile").click().run(timeout=60)
-    assert any("¿Cómo vas a utilizar VISION?" in item.value for item in app.markdown)
+    assert "¿Quién va a iniciar sesión?" in _text(app)
     assert len(lion_calls) == 1
 
 
@@ -429,24 +489,19 @@ def test_invalid_latest_xlsx_falls_back_to_newest_lion_valid_snapshot(
         )
 
     monkeypatch.setattr(lion_adapter, "process_workbook", process_workbook)
-    monkeypatch.setattr(
-        daily_ingestion,
-        "ingest_proof_snapshot",
-        lambda *_: {"status": "registered"},
-    )
+    _fake_folder_sync(monkeypatch)
 
     app = AppTest.from_file(str(APP_FILE)).run(timeout=60)
-
+    assert not app.exception
+    app = _enter_access(app, "O2C")
     assert not app.exception
     assert processed == [b"invalid synthetic workbook", synthetic_sap_xlsx]
-    app.button(key="role_commercial").click().run(timeout=60)
-    assert app.selectbox(key="commercial_owner_picker").options == ["Comercial sintético"]
-    app.toggle[0].set_value(True).run()
-    displayed = "\n".join(
-        item.value for collection in (app.caption, app.success) for item in collection
-    )
-    assert latest_valid.name in displayed
-    assert latest_invalid.name not in displayed
+    app.button(key="change_profile").click().run(timeout=60)
+    assert _picker(app).options == ["Comercial sintético", "O2C", "Administrator"]
+    app = _enter_access(app, "Comercial sintético")
+    assert not app.exception
+    assert "Mis clientes" in _text(app)
+    assert any(b.key == "change_profile" for b in app.button)
 
 
 def test_streamlit_reruns_do_not_duplicate_daily_proof_observation(
@@ -463,6 +518,10 @@ def test_streamlit_reruns_do_not_duplicate_daily_proof_observation(
         "snapshot_2026-10-26.xlsx",
         "2026-10-26",
         database_path=database,
+        config={
+            "sources": [{"id": "1", "name": "Etapa PROOF", "kind": "standard"}],
+            "calendar": {"weekdays": [0, 1, 2, 3, 4], "holidays": []},
+        },
     )
     workbook = openpyxl.load_workbook(BytesIO(synthetic_sap_xlsx))
     workbook["Data"]["O2"] = date(2026, 1, 2)
@@ -491,7 +550,10 @@ def test_streamlit_reruns_do_not_duplicate_daily_proof_observation(
 
     app = AppTest.from_file(str(APP_FILE)).run(timeout=60)
     assert not app.exception
-    app.run()
+    app = _enter_access(app, "O2C")
+    assert not app.exception
+    app.run(timeout=60)
+    app = _settle(app)
     assert not app.exception
 
     history = proof.read_history(database)
@@ -508,8 +570,9 @@ def test_missing_external_sources_are_reported_in_administration(
     monkeypatch.delenv("CO_VISION_PROOF_REFERENCE_DB", raising=False)
 
     app = AppTest.from_file(str(APP_FILE)).run(timeout=60)
-    app.toggle[0].set_value(True).run()
+    app = _enter_access(app, "Administrator", settle=False)
 
     assert not app.exception
-    assert any("sap/daily" in item.value for item in app.error)
-    assert any("Base de datos: ERROR" in item.value for item in app.error)
+    assert any("control de fechas" in item.value for item in app.subheader)
+    assert any("sap" in item.value and "daily" in item.value for item in app.caption)
+    assert any("No se encuentra la base PROOF" in item.value for item in app.error)
