@@ -9,7 +9,7 @@
 ## Python packaging and tests
 
 - Use a single root `pyproject.toml` and setuptools editable installation for the module packages. This keeps each package in its existing product area while allowing imports from the project virtual environment.
-- Pin setuptools and pytest in project metadata. Record the resolved environment in `requirements-dev.lock` for repeatable local setup.
+- Pin direct dependencies in project metadata and record the full all-extras resolution in generated `uv.lock`; validate installs with `uv sync --locked --all-extras`.
 - Use pytest for technical and characterization checks. Streamlit 1.66.1 is an optional dependency for the local VISION development screen only; it is installed in `.venv` and does not add database or deployment infrastructure.
 - `scripts/check.py` is the single local technical check command and requires the project virtual environment interpreter.
 

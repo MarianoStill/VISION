@@ -25,7 +25,26 @@ jobs:
       - name: Create project environment
         run: uv venv --python 3.14 .venv
       - name: Install project extras
-        run: uv pip install --python .venv/bin/python -e '.[test,vision,lion,proof]'
+        run: uv sync --locked --all-extras
+      - name: Ruff lint (changed application and validation surfaces)
+        run: |
+          .venv/bin/ruff check --select E4,E7,E9,F --extend-ignore E402,E701,E702 \
+            apps/vision/src/vision/development_app.py \
+            apps/vision/src/vision/data_admin.py \
+            scripts/regression_compare.py \
+            scripts/check.py \
+            tests/integration/test_check_script.py \
+            tests/integration/test_regression_compare.py \
+            tests/vision/test_development_app.py \
+            tests/vision/test_folder_sync.py \
+            tests/e2e/seed.py \
+            tests/e2e/conftest.py \
+            tests/e2e/test_ui_roles.py
+      - name: Audit locked runtime dependencies
+        run: |
+          uv export --locked --all-extras --format requirements-txt --no-emit-project \
+            --output-file "$RUNNER_TEMP/vision-requirements.txt"
+          .venv/bin/pip-audit --strict --requirement "$RUNNER_TEMP/vision-requirements.txt"
       - name: Verify imports resolve to this checkout
         run: |
           .venv/bin/python - <<'PY'
@@ -39,11 +58,24 @@ jobs:
         run: .venv/bin/python scripts/check.py
       - name: Run tests with JUnit report
         run: .venv/bin/python -m pytest -q -p no:cacheprovider --junitxml=candidate.xml
+      - name: Measure coverage
+        run: |
+          .venv/bin/coverage run --data-file=.coverage -m pytest -q -p no:cacheprovider --ignore=tests/e2e
+          .venv/bin/coverage report
+          .venv/bin/coverage xml -o coverage.xml
+          .venv/bin/coverage html -d htmlcov
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: junit-candidate
           path: candidate.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
 
   regression-vs-main:
     if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
@@ -57,10 +89,13 @@ jobs:
       - run: uv python install 3.14
       - name: Test main baseline
         run: |
-          git worktree add ../baseline origin/main
-          cd ../baseline
+          uv export --locked --all-extras --format requirements-txt --no-emit-project \
+            --output-file "$RUNNER_TEMP/vision-requirements.txt"
+          git worktree add "$RUNNER_TEMP/vision-baseline" origin/main
+          cd "$RUNNER_TEMP/vision-baseline"
           uv venv --python 3.14 .venv
-          uv pip install --python .venv/bin/python -e '.[test,vision,lion,proof]'
+          uv pip install --python .venv/bin/python -r "$RUNNER_TEMP/vision-requirements.txt"
+          uv pip install --python .venv/bin/python --no-deps --no-build-isolation -e .
           .venv/bin/python -m pytest -q -p no:cacheprovider --junitxml="$GITHUB_WORKSPACE/baseline.xml" || true
       - uses: actions/download-artifact@v4
         with:
@@ -83,7 +118,7 @@ jobs:
       - run: uv python install 3.14
       - run: uv venv --python 3.14 .venv
       - name: Install project extras
-        run: uv pip install --python .venv/bin/python -e '.[test,vision,lion,proof,e2e]'
+        run: uv sync --locked --all-extras
       - name: Install Chromium
         run: .venv/bin/python -m playwright install --with-deps chromium
       - name: Playwright UI tests (synthetic data, loopback only)

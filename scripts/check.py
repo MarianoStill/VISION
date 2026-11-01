@@ -102,8 +102,7 @@ def main() -> int:
         print(
             "Required development dependencies are unavailable: "
             f"{', '.join(missing)}.\n"
-            f"Install them with: uv pip install --python {expected_interpreter} "
-            '-e ".[test,vision,lion,proof]"',
+            "Install them with: uv sync --locked --all-extras",
             file=sys.stderr,
         )
         return 2

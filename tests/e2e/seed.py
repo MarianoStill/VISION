@@ -1,13 +1,12 @@
 """Synthetic, non-business data root for UI automation. Never reads real SAP data."""
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-import sys
 
 import openpyxl
-
 import proof
 from lion.sap_engine import REQUIRED
 

@@ -1,25 +1,18 @@
-﻿from datetime import date
+﻿import time
+from datetime import date
 from io import BytesIO
-import os
-import time
 from pathlib import Path
-import sqlite3
 from zipfile import BadZipFile
 
-import proof
-import pytest
 import openpyxl
 import pandas as pd
+import proof
+import pytest
 
 pytest.importorskip("streamlit")
 
 from streamlit.testing.v1 import AppTest
-from vision import daily_ingestion, lion_adapter
-from vision.synthetic_examples import (
-    EMPTY_INVENTORY_INPUTS,
-    SYNTHETIC_INVENTORY_INPUTS,
-)
-
+from vision import lion_adapter
 
 APP_FILE = (
     Path(__file__).resolve().parents[2]
@@ -48,8 +41,9 @@ def isolate_external_operational_sources(monkeypatch, tmp_path):
 @pytest.fixture(autouse=True)
 def isolate_background_work(monkeypatch):
     """Evita el proceso de calentamiento externo y la caché compartida entre tests."""
-    import streamlit as st
     import subprocess
+
+    import streamlit as st
 
     st.cache_resource.clear()
 
@@ -321,7 +315,8 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
         item.value for collection in (app.caption, app.error) for item in collection
     )
     assert any("control de fechas" in item.value for item in app.subheader)
-    assert "Base PROOF: " in displayed_text
+    assert "Base PROOF configurada: proof.db" in displayed_text
+    assert str(root) not in displayed_text
     assert "No se pudo conciliar el inventario de archivos" in displayed_text
 
 

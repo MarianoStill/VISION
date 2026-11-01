@@ -11,6 +11,7 @@ The modules are designed to be developed and tested separately and integrated wh
 The local development workflow migrates the received copies of LION and PROOF. It is not a production release: LION's identity with Azure is unverified, business rules are not approved, and there is no SAP connection. See [docs/local_data_workflow.md](docs/local_data_workflow.md).
 
 See [docs/architecture.md](docs/architecture.md), [docs/testing.md](docs/testing.md) (tests, UI automation, skips, CI), [docs/business_rules.md](docs/business_rules.md), [docs/data_contract.md](docs/data_contract.md), and [docs/release_process.md](docs/release_process.md).
+The Azure development deployment is only a gated proposal; see [docs/azure_dev_deployment.md](docs/azure_dev_deployment.md). No Azure resources or production deployment are configured.
 
 ## Development environment and technical check
 
@@ -21,10 +22,22 @@ The project requires Python 3.13 or newer. Python 3.14 is used for cloud validat
 ```powershell
 uv python install 3.14
 uv venv --python 3.14 .venv
-uv pip install --python .venv\Scripts\python.exe -e ".[test,vision,lion,proof]"
+uv sync --locked --all-extras
 ```
 
-Run the canonical check with the project interpreter:
+Run the complete local validation (Ruff, canonical checks, coverage, and Playwright):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate.ps1
+```
+
+Install the Playwright browser once after syncing the locked extras:
+
+```powershell
+.\.venv\Scripts\python.exe -m playwright install chromium
+```
+
+The canonical check can also be run alone:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\check.py
@@ -35,7 +48,7 @@ Run the canonical check with the project interpreter:
 ```bash
 uv python install 3.14
 uv venv --python 3.14 .venv
-uv pip install --python .venv/bin/python -e ".[test,vision,lion,proof]"
+uv sync --locked --all-extras
 .venv/bin/python scripts/check.py
 ```
 

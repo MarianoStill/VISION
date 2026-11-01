@@ -1,12 +1,13 @@
 """Administración ligera: no requiere cargar LION ni todo el histórico."""
 from pathlib import Path
 from time import perf_counter
-import sqlite3
+
 import streamlit as st
+
 from vision import design_system, role_selection
 from vision.folder_sync import audit_folder, synchronize_folder
-from vision.sap_snapshots import discover_daily_snapshots
 from vision.preload import database_signature
+from vision.sap_snapshots import discover_daily_snapshots
 
 
 @st.cache_data(ttl=30,max_entries=4,show_spinner=False)
@@ -38,8 +39,8 @@ def render_data_admin(sources,coordinator):
         times=st.session_state.get("_vision_view_timings_v8",{})
         if times:st.dataframe([dict(Vista=name,Segundos=seconds) for name,seconds in times.items()],hide_index=True,width="stretch")
     db=Path(sources['proof_db']);folder=Path(sources['sap_daily_dir'])
-    st.caption("Carpeta SAP: "+str(folder))
-    st.caption("Base PROOF: "+str(db))
+    st.caption("Carpeta SAP configurada: "+str(Path("sap")/folder.name))
+    st.caption("Base PROOF configurada: "+db.name)
     if not db.is_file():
         st.error("No se encuentra la base PROOF configurada. No se crea otra base automáticamente.")
         return
@@ -81,5 +82,5 @@ def render_data_admin(sources,coordinator):
     if last:
         st.info(last['message'])
         st.caption("Añadidas: "+str(last['added'])+" · Segundos: "+str(last['seconds']))
-        if last['backup']:st.caption("Backup de datos: "+last['backup'])
+        if last['backup']:st.caption("Backup de datos: "+Path(last['backup']).name)
     st.caption("La sincronización automática se solicita al entrar a un workspace cuando cambia la preparación de fuentes. No es un servicio programado que funcione con VISION cerrada.")

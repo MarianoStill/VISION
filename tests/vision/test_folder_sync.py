@@ -35,9 +35,10 @@ def test_synchronize_is_idempotent_and_backs_up_before_writing(
     database = _database(tmp_path, synthetic_sap_xlsx)
     folder = tmp_path / "daily"
     folder.mkdir()
-    import openpyxl
-    from io import BytesIO
     from datetime import date
+    from io import BytesIO
+
+    import openpyxl
 
     workbook = openpyxl.load_workbook(BytesIO(synthetic_sap_xlsx))
     workbook["Data"]["O2"] = date(2026, 1, 2)

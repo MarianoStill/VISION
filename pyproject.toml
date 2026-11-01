@@ -15,6 +15,7 @@ vision = ["streamlit==1.66.1"]
 lion = ["pandas==2.3.3", "openpyxl==3.1.5"]
 proof = ["openpyxl==3.1.5"]
 e2e = ["pytest-playwright==0.10.0", "playwright==1.64.1"]
+quality = ["coverage==7.17.0", "pip-audit==2.10.1", "ruff==0.17.3"]
 
 [tool.setuptools]
 packages = ["covision", "proof", "lion", "vision"]
@@ -29,3 +30,12 @@ vision = "apps/vision/src/vision"
 testpaths = ["tests/proof", "tests/lion", "tests/vision", "tests/integration", "tests/regression"]
 addopts = "-ra"
 markers = ["e2e: browser UI tests (Playwright); run with 'pytest tests/e2e'"]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ["covision", "lion", "proof", "vision"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

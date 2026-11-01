@@ -7,8 +7,14 @@ All commands use the project interpreter (`.venv`); never an interpreter from an
 ```powershell
 uv python install 3.14
 uv venv --python 3.14 .venv
-uv pip install --python .venv\Scripts\python.exe -e ".[test,vision,lion,proof,e2e]"
+uv sync --locked --all-extras
 .\.venv\Scripts\python.exe -m playwright install chromium
+```
+
+Use the single local validation command after browser installation:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate.ps1
 ```
 
 Verify that imports resolve to this checkout:
@@ -44,4 +50,6 @@ CI runs the suite on the branch and on `origin/main`, then `scripts/regression_c
 
 ## CI
 
-`.github/workflows/validation.yml` runs on every push, on pull requests to `main`, and manually: `check` (imports, canonical check, JUnit), `regression-vs-main`, and `e2e` (Playwright). Artifacts contain JUnit XML only.
+`.github/workflows/validation.yml` runs on every push, on pull requests to `main`, and manually: `check` (imports, Ruff on touched application/test surfaces, pip-audit, canonical check, JUnit and coverage), `regression-vs-main`, and `e2e` (Playwright). JUnit and coverage XML/HTML reports are uploaded as artifacts. The current report measures 58% overall; Streamlit's `AppTest` executes `development_app.py` in its script runner, which coverage.py does not currently trace (the module appears as 0%), while browser and functional assertions independently exercise its flows. Treat this as a coverage instrumentation gap, not evidence that the UI is untested.
+
+`uv.lock` is the generated, cross-platform lock for all extras. `requirements-dev.lock` was removed because it contained only the minimal pytest environment and did not lock application, browser-test, or quality-tool dependencies.
