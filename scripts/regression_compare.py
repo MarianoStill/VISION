@@ -29,7 +29,8 @@ def _signature(node) -> str:
 
 def load(path) -> dict:
     tests, errors = {}, []
-    for case in ET.parse(path).getroot().iter("testcase"):
+    root = ET.parse(path).getroot()
+    for case in root.iter("testcase"):
         test_id = f"{case.get('classname', '')}::{case.get('name', '')}"
         failure = case.find("failure")
         error = case.find("error")
@@ -37,12 +38,18 @@ def load(path) -> dict:
         if failure is not None or error is not None:
             node = failure if failure is not None else error
             tests[test_id] = (FAIL, _signature(node))
-            if error is not None and not case.get("name"):
+            if error is not None and (error.get("message") or "").casefold() == "collection failure":
                 errors.append(test_id)
         elif skipped is not None:
             tests[test_id] = (SKIP, None)
         else:
             tests[test_id] = (PASS, None)
+    suite_errors = sum(int(suite.get("errors", "0")) for suite in root.iter("testsuite"))
+    testcase_errors = sum(
+        1 for case in root.iter("testcase") for node in case.findall("error")
+    )
+    if suite_errors > testcase_errors and not errors:
+        errors.append("<junit-suite collection errors>")
     return {"tests": tests, "collection_errors": errors}
 
 
@@ -53,6 +60,7 @@ def compare(baseline: dict, candidate: dict) -> dict:
         "still_failing_changed": [], "new_pass": [], "new_fail": [],
         "new_skip": [], "removed": [], "skipped_to_pass": [], "pass_to_skip": [],
         "unchanged": 0, "collection_errors": candidate["collection_errors"],
+        "baseline_collection_errors": baseline["collection_errors"],
     }
     for test_id, (outcome, sig) in sorted(cand.items()):
         if test_id not in base:
@@ -78,7 +86,8 @@ def compare(baseline: dict, candidate: dict) -> dict:
             result["removed"].append(test_id + f" ({outcome})")
     result["failed"] = bool(
         result["regressions"] or result["still_failing_changed"]
-        or result["collection_errors"] or result["pass_to_skip"]
+        or result["collection_errors"] or result["baseline_collection_errors"]
+        or result["pass_to_skip"]
         or any(item.endswith("(PASS)") for item in result["removed"])
     )
     return result
