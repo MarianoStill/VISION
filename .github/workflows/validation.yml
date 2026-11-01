@@ -74,3 +74,22 @@ jobs:
           path: |
             regression.json
             baseline.xml
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - run: uv venv --python 3.14 .venv
+      - name: Install project extras
+        run: uv pip install --python .venv/bin/python -e '.[test,vision,lion,proof,e2e]'
+      - name: Install Chromium
+        run: .venv/bin/python -m playwright install --with-deps chromium
+      - name: Playwright UI tests (synthetic data, loopback only)
+        run: .venv/bin/python -m pytest -q -p no:cacheprovider tests/e2e --junitxml=e2e.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-e2e
+          path: e2e.xml
