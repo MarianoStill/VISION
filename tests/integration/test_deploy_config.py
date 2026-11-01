@@ -27,6 +27,7 @@ def test_bicep_denies_access_by_default_and_hardens_the_site():
     for setting in (
         "ipSecurityRestrictionsDefaultAction: 'Deny'",
         "scmIpSecurityRestrictionsDefaultAction: 'Deny'",
+        "scmIpSecurityRestrictionsUseMain: true",
         "httpsOnly: true",
         "ftpsState: 'Disabled'",
         "minTlsVersion: '1.2'",
