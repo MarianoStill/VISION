@@ -2,15 +2,14 @@ name: Validation
 
 on:
   pull_request:
-    branches:
-      - chore/technical-foundation
-      - chore/cloud-validation-cross-platform
-      - feature/vision-usable-mvp
+    branches: [main]
   push:
-    branches:
-      - chore/technical-foundation
-      - "chore/**"
-      - feature/vision-usable-mvp
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: validation-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -27,5 +26,51 @@ jobs:
         run: uv venv --python 3.14 .venv
       - name: Install project extras
         run: uv pip install --python .venv/bin/python -e '.[test,vision,lion,proof]'
+      - name: Verify imports resolve to this checkout
+        run: |
+          .venv/bin/python - <<'PY'
+          import pathlib, covision, lion, proof, vision
+          root = pathlib.Path.cwd().resolve()
+          for module in (covision, lion, proof, vision):
+              path = pathlib.Path(module.__file__).resolve()
+              assert root in path.parents, (module.__name__, path)
+          PY
       - name: Run canonical check
         run: .venv/bin/python scripts/check.py
+      - name: Run tests with JUnit report
+        run: .venv/bin/python -m pytest -q -p no:cacheprovider --junitxml=candidate.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-candidate
+          path: candidate.xml
+
+  regression-vs-main:
+    if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.14
+      - name: Test main baseline
+        run: |
+          git worktree add ../baseline origin/main
+          cd ../baseline
+          uv venv --python 3.14 .venv
+          uv pip install --python .venv/bin/python -e '.[test,vision,lion,proof]'
+          .venv/bin/python -m pytest -q -p no:cacheprovider --junitxml="$GITHUB_WORKSPACE/baseline.xml" || true
+      - uses: actions/download-artifact@v4
+        with:
+          name: junit-candidate
+      - name: Differential comparison
+        run: python3 scripts/regression_compare.py baseline.xml candidate.xml --json regression.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regression-report
+          path: |
+            regression.json
+            baseline.xml
