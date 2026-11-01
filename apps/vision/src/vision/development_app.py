@@ -1,22 +1,23 @@
 from __future__ import annotations
 
-from datetime import date
-from time import perf_counter
 import hashlib
 import json
 import os
-from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import time
+from datetime import date
+from pathlib import Path
+from time import perf_counter
 from zipfile import BadZipFile
 
 import pandas as pd
-from openpyxl.utils.exceptions import InvalidFileException
-import streamlit as st
-
 import proof
+import streamlit as st
+from openpyxl.utils.exceptions import InvalidFileException
+
+from vision import design_system, lion_adapter, o2c_workspace, role_selection
 from vision.commercial_workspace import (
     client_options,
     commercial_options,
@@ -24,17 +25,18 @@ from vision.commercial_workspace import (
     render_commercial_workspace,
     scope_by_delegation,
 )
-from vision import design_system, lion_adapter, o2c_workspace, role_selection
-from vision.manager_reports import render_manager_reports, scope_documents
-from vision.daily_ingestion import ingest_proof_snapshot
-from vision.navigation_cache import (session_value, catalog_signature, read_catalog, write_catalog)
 from vision.data_sources import (
-    DEFAULT_SAP_DAILY_RELATIVE_PATH,
     resolve_external_sources,
+)
+from vision.manager_reports import render_manager_reports, scope_documents
+from vision.navigation_cache import (
+    catalog_signature,
+    read_catalog,
+    session_value,
+    write_catalog,
 )
 from vision.proof_link import resolve_proof_order_link
 from vision.sap_snapshots import (
-    SapSnapshot,
     SnapshotDiscoveryError,
     discover_daily_snapshots,
 )
@@ -219,6 +221,7 @@ except (SnapshotDiscoveryError, OSError, ValueError, RuntimeError) as exc:
     st.stop()
 
 from vision.loading_ui import render_preload_status
+
 _status = _preload_job.status()
 st.session_state["_vision_last_preload_job_v12"] = _preload_job
 # Entrar solo finaliza la ingestión existente. No se procesa el XLSX en el hilo UI.
@@ -253,7 +256,6 @@ history_database = str(proof_database) if proof_database.is_file() else None
 automatic_history = _bundle["automatic_history"]
 proof_error = _bundle["proof_error"]
 st.session_state["_vision_history_diagnostic_v15"] = proof_error
-proof_snapshot_status = _bundle["proof_snapshot_status"]
 
 
 def _timed_view_v8(label, function, *args, **kwargs):
@@ -414,7 +416,6 @@ if (
     selected_commercial is None
     and selected_delegation is None
     and not selected_o2c
-    and not admin_mode
 ):
     if source_model is None:
         notice = (
@@ -433,7 +434,7 @@ if (
     )
     st.stop()
 
-if selected_o2c and not admin_mode:
+if selected_o2c:
     design_system.render_shell(
         context=("Perfil", "O2C"),
         on_change_profile=role_selection.change_profile,
@@ -463,55 +464,6 @@ if selected_commercial is not None or selected_delegation is not None:
         workspace="Commercial Workspace",
     )
     page = page or "Mis clientes"
-
-if admin_mode:
-    if selected_commercial is None and selected_delegation is None and not selected_o2c:
-        design_system.render_shell(workspace="Administration")
-    st.subheader("Fuentes operacionales")
-    with st.expander("Tiempos medidos de preparación", expanded=False):
-        st.dataframe(
-            [{"Operación": name, "Segundos": seconds}
-             for name, seconds in _preload_job.status()["timings"].items()],
-            hide_index=True, width="stretch",
-        )
-        _view_times = st.session_state.get("_vision_view_timings_v8", {})
-        if _view_times:
-            st.dataframe(
-                [{"Vista (última ejecución)": name, "Segundos": seconds}
-                 for name, seconds in _view_times.items()], hide_index=True, width="stretch",
-            )
-        st.caption("Mediciones del servidor. Las vistas se miden al ejecutarse; no incluyen la transferencia ni el dibujo final en el navegador.")
-
-    status_columns = st.columns(2)
-    with status_columns[0]:
-        st.markdown("**FUENTE SAP**")
-        if selected_snapshot is None and sap_error is None:
-            st.error(
-                "LION: ERROR (no hay XLSX válido en CO-VISION-data/"
-                + DEFAULT_SAP_DAILY_RELATIVE_PATH.as_posix()
-                + ")."
-            )
-        elif selected_snapshot is None:
-            st.error("LION: ERROR (" + sap_error + ").")
-        else:
-            st.success("LION: OK")
-            st.caption(f"Último snapshot: {selected_snapshot.path.name}")
-            st.caption(f"Fecha de observación: {selected_snapshot.observation_date}")
-    with status_columns[1]:
-        st.markdown("**PROOF**")
-        if history_database is None:
-            st.error("Base de datos: ERROR (no encontrada).")
-        elif proof_error:
-            st.error("Base de datos: ERROR (" + proof_error + ").")
-        else:
-            st.success("Base de datos: OK")
-        st.caption(
-            "Snapshot: "
-            + (proof_snapshot_status or "NO DISPONIBLE")
-        )
-        if automatic_history and automatic_history["dates"]:
-            st.caption("Última observación: " + automatic_history["dates"][-1])
-    st.stop()
 
 if not admin_mode:
     if page == "Inicio":

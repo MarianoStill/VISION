@@ -62,7 +62,7 @@ The project requires Python 3.13 or newer. The validated cloud runtime is Python
 ```powershell
 uv python install 3.14
 uv venv --python 3.14 .venv
-uv pip install --python .venv\Scripts\python.exe -e ".[test,vision,lion,proof]"
+uv sync --locked --all-extras
 .\.venv\Scripts\python.exe scripts\check.py
 ```
 
@@ -71,7 +71,7 @@ uv pip install --python .venv\Scripts\python.exe -e ".[test,vision,lion,proof]"
 ```bash
 uv python install 3.14
 uv venv --python 3.14 .venv
-uv pip install --python .venv/bin/python -e ".[test,vision,lion,proof]"
+uv sync --locked --all-extras
 .venv/bin/python scripts/check.py
 ```
 

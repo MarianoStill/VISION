@@ -59,4 +59,4 @@ def test_missing_dependencies_report_install_command(
     assert check.main() == 2
     error = capsys.readouterr().err
     assert "Required development dependencies are unavailable" in error
-    assert '.[test,vision,lion,proof]' in error
+    assert "uv sync --locked --all-extras" in error

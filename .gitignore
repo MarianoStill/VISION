@@ -15,6 +15,10 @@ __pycache__/
 .coverage
 .coverage.*
 htmlcov/
+coverage.xml
+validation-junit.xml
+candidate.xml
+e2e.xml
 build/
 dist/
 *.egg-info/
