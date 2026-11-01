@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "co-vision"
+version = "0.1.0"
+description = "Technical foundation for the modular CO-VISION product"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1", "setuptools==84.2.1"]
+vision = ["streamlit==1.66.1"]
+lion = ["pandas==2.3.3", "openpyxl==3.1.5"]
+proof = ["openpyxl==3.1.5"]
+
+[tool.setuptools]
+packages = ["covision", "proof", "lion", "vision"]
+
+[tool.setuptools.package-dir]
+covision = "shared/python/covision"
+proof = "modules/proof/src/proof"
+lion = "modules/lion/src/lion"
+vision = "apps/vision/src/vision"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/proof", "tests/lion", "tests/vision", "tests/integration", "tests/regression"]
+addopts = "-ra"
