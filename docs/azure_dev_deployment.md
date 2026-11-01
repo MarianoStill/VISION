@@ -19,6 +19,7 @@ flowchart LR
     app -->|HTTP + console logs| law[Log Analytics<br/>30 d, daily cap]
   end
   user[Approved users] -->|HTTPS via IT-approved IPs/VPN and, later, Entra login| app
+  runner[Dedicated isolated GitHub runner<br/>inside approved network] -->|OIDC + ZIP deploy via SCM/Kudu| app
   entra[Entra ID app registration<br/>owned by IT] -.-> app
 ```
 
@@ -37,8 +38,10 @@ Add them only through an IT-approved change.
 | `uv.lock` | Source of the locked runtime requirements exported into the package. |
 
 Security defaults in the template: HTTPS only, TLS 1.2, FTPS disabled, SCM site restricted, **default
-action Deny** for the site and SCM (the `allowedCidrs` parameter has no default, so the app is never
-public by accident), WebSockets on (required by Streamlit), Always On, health check
+action Deny** for the site and SCM. SCM/Kudu explicitly reuses the main site's approved CIDR rules
+(`scmIpSecurityRestrictionsUseMain: true`); the deployment runner must originate from one of those
+allowed network ranges. The `allowedCidrs` parameter has no default, so the app is never public by
+accident. WebSockets on (required by Streamlit), Always On, health check
 `/_stcore/health`, no client affinity, no secrets in app settings.
 
 ## Configuration and secrets
@@ -74,11 +77,15 @@ with the web app's managed identity, never GitHub secrets or the repository.
    Playwright, differential run against `main`). Branch protection should require it.
 2. After merge, an authorized person runs **Deploy DEV (Azure App Service)** with `ref` = tag or SHA.
    The `gate` job refuses unless a successful `Validation` run exists for that exact commit.
-3. The `deploy` job uses GitHub Environment `dev` (configure required reviewers there), signs in with
-   OIDC, builds the package from `uv.lock`, deploys it, and verifies the app reports `Running`. If
-   `AZURE_DEV_SMOKE_URL` is set it also polls `/_stcore/health`. GitHub-hosted runners are blocked by
-   the IP restrictions unless IT allows them, so the smoke test is optional; App Service's own health
-   check (`healthCheckPath`) is always on.
+3. The `deploy` job runs only on the dedicated self-hosted runner labelled
+   `self-hosted, linux, x64, vision-dev-deploy`. IT must host it inside the approved corporate/VPN
+   network, with outbound egress included in `allowedCidrs`. It uses GitHub Environment `dev`
+   (configure required reviewers there), signs in with OIDC, builds the package from `uv.lock`,
+   deploys through SCM/Kudu, and verifies the app reports `Running`. If `AZURE_DEV_SMOKE_URL` is set
+   it also polls `/_stcore/health` from that same network. GitHub-hosted runners are deliberately
+   not used for deployment because their IP ranges are broad/dynamic and GitHub advises against
+   allowlisting them for internal resources; App Service's own health check (`healthCheckPath`)
+   remains enabled.
 4. **Rollback:** re-run the workflow with the previous known-good tag/SHA (it must also have a green
    Validation run). Tag each deployed commit (e.g. `dev-YYYYMMDD-n`). Deployment slots (swap) would
    need Standard (S1, ~$70/month) and are not worth it for DEV.
@@ -131,8 +138,8 @@ resource group to stop all charges. Set an Azure Budget alert (for example EUR 5
 5. Entra app registration and policy for App Service Authentication, allowed users/groups, claim contract.
 6. Confirmation that a private-repo GitHub-to-Azure OIDC integration and a Python 3.13 App Service
    runtime are acceptable/available (`az webapp list-runtimes --os linux`).
-7. Log retention/privacy requirement and who owns monitoring and alerts.
-8. Confirmation that DEV contains synthetic data only; any real data requires a separate approval.
+8. Log retention/privacy requirement and who owns monitoring and alerts.
+9. Confirmation that DEV contains synthetic data only; any real data requires a separate approval.
 
 ## First deployment steps (after the gates above; none executed)
 
@@ -141,7 +148,8 @@ resource group to stop all charges. Set an Azure Budget alert (for example EUR 5
    (use `--what-if` first). Review the output.
 3. In GitHub: create Environment `dev` with required reviewers; add the variables listed above; finally set
    `AZURE_DEV_DEPLOY_ENABLED=true`.
-4. Run **Deploy DEV** with the validated `main` SHA; approve the environment gate.
+4. Register the dedicated runner with the labels above, confirm its outbound IP is in `allowedCidrs`,
+   then run **Deploy DEV** with the validated `main` SHA; approve the environment gate.
 5. From an allowed network, open the app, check `/_stcore/health`, and exercise each profile with
    synthetic data. Tag the commit; record it as the rollback target.
 6. When IT approves, configure App Service Authentication and remove any reliance on the IP gate alone.
@@ -151,6 +159,8 @@ resource group to stop all charges. Set an Azure Budget alert (for example EUR 5
 - No real authentication or server-side authorization yet; the IP/VPN gate is the only barrier. The
   Administrator screen can be selected by any reachable user (synthetic data only, destructive actions
   affect only disposable `/tmp` data).
+- Deployment requires IT to provide and maintain the dedicated self-hosted runner in the approved
+  network. If it is offline or its egress CIDR changes, deployment/smoke tests will fail closed.
 - Not validated against a real Azure subscription: the Bicep file is syntax-checked in CI only, the
   Python 3.13 runtime and Oryx build of the exported `requirements.txt` are untested on App Service, and
   the cost figures are public estimates. Expect adjustments on the first dry run (`--what-if`).
