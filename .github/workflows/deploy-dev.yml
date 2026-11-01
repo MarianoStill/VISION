@@ -51,7 +51,10 @@ jobs:
 
   deploy:
     needs: gate
-    runs-on: ubuntu-latest
+    # Dedicated, isolated runner hosted inside an IT-approved network whose egress CIDR
+    # is included in allowedCidrs. Do not replace with GitHub-hosted runners: their IP
+    # ranges are broad/dynamic and are not suitable for this SCM allowlist.
+    runs-on: [self-hosted, linux, x64, vision-dev-deploy]
     environment: dev
     permissions:
       contents: read
