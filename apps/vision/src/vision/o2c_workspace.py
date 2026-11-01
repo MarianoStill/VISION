@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 from vision import lion_adapter
 from vision.o2c_summary import STYLE as O2C_SUMMARY_STYLE, render_operational_summary
-from vision.commercial_workspace import NO_DATE, _STYLE, _advance, _available, _contrast, _html, _label, format_sap_dates, render_machine_sheet, sort_by_urgency, urgency_bands, urgency_color, with_delivery_dates
+from vision.commercial_workspace import NO_DATE, _STYLE, _available, _contrast, _html, _label, format_sap_dates, render_machine_sheet, sort_by_urgency, urgency_bands, urgency_color, with_delivery_dates
 from vision.role_selection import O2C_ACTIVE_KEY, O2C_PRIMARY_KEY, O2C_STAGES_KEY
 ALL_STAGES = 'Todas mis etapas'
 _ALL = {'urgency': 'Todas las urgencias', 'area': 'Todas las delegaciones / áreas', 'commercial': 'Todos los comerciales', 'client': 'Todos los clientes'}
@@ -116,7 +116,12 @@ def _seed(key: str, value) -> None:
     if key not in st.session_state:
         st.session_state[key] = value
 
-def render_my_stages(labels: list[str], frame: pd.DataFrame | None=None) -> tuple[list[str], str]:
+def render_my_stages(
+    labels: list[str],
+    frame: pd.DataFrame | None = None,
+    *,
+    locked: bool = False,
+) -> tuple[list[str], str]:
     """Control «Mis etapas»; devuelve (etapas elegidas, etapa activa)."""
     chosen = [s for s in st.session_state.get(O2C_STAGES_KEY, []) if s in labels]
     st.session_state[O2C_STAGES_KEY] = chosen
@@ -127,8 +132,11 @@ def render_my_stages(labels: list[str], frame: pd.DataFrame | None=None) -> tupl
     if active not in (ALL_STAGES, *chosen):
         st.session_state[O2C_ACTIVE_KEY] = chosen[0] if chosen else ALL_STAGES
     with st.expander('Mis etapas', expanded=False):
-        st.caption('Filtros de trabajo, no permisos. Puedes cambiarlos cuando quieras.')
-        st.multiselect('Etapas con las que trabajo', labels, key=O2C_STAGES_KEY, placeholder='Selecciona al menos una etapa')
+        if locked:
+            st.caption('Etapas asignadas por el administrador de VISION.')
+        else:
+            st.caption('Filtros de trabajo, no permisos. Puedes cambiarlos cuando quieras.')
+            st.multiselect('Etapas con las que trabajo', labels, key=O2C_STAGES_KEY, placeholder='Selecciona al menos una etapa')
         chosen = list(st.session_state.get(O2C_STAGES_KEY, []))
         if chosen:
             if st.session_state.get(O2C_PRIMARY_KEY) not in chosen:
@@ -161,26 +169,46 @@ def render_my_stages(labels: list[str], frame: pd.DataFrame | None=None) -> tupl
             st.button('Todas mis etapas', key='o2c_all_nav_v7', type='primary' if st.session_state[O2C_ACTIVE_KEY] == ALL_STAGES else 'secondary', on_click=select_stage, args=(ALL_STAGES,))
     return (chosen, st.session_state[O2C_ACTIVE_KEY])
 
-def _enriched(model: pd.DataFrame, details: dict | None, observation_date) -> pd.DataFrame:
-    key = (str(observation_date), id(model), id(details), len(model))
+def _enriched(
+    model: pd.DataFrame,
+    details: dict | None,
+    observation_date,
+    allowed_stages: list[str] | None = None,
+) -> pd.DataFrame:
+    stage_scope = tuple(allowed_stages) if allowed_stages is not None else None
+    key = (str(observation_date), id(model), id(details), len(model), stage_scope)
     cached = st.session_state.get('o2c_enriched')
     if cached and cached[0] == key:
         return cached[1]
     frame = with_delivery_dates(model, details)
-    frame['Etapas actuales'] = machine_stages(frame).map(' · '.join)
-    frame['_stages'] = machine_stages(frame)
+    stages = machine_stages(frame)
+    if stage_scope is not None:
+        allowed = set(stage_scope)
+        stages = stages.map(lambda values: tuple(stage for stage in values if stage in allowed))
+    frame['Etapas actuales'] = stages.map(' · '.join)
+    frame['_stages'] = stages
     st.session_state['o2c_enriched'] = (key, frame)
     return frame
 
-def render_o2c_workspace(model: pd.DataFrame, *, details: dict | None, history: dict | None, observation_date: str | None) -> None:
+def render_o2c_workspace(
+    model: pd.DataFrame,
+    *,
+    details: dict | None,
+    history: dict | None,
+    observation_date: str | None,
+    allowed_stages: list[str] | None = None,
+) -> None:
     _html(_STYLE)
     labels = stage_labels()
+    if allowed_stages is not None:
+        allowed = set(allowed_stages)
+        labels = [stage for stage in labels if stage in allowed]
     if observation_date:
         st.caption(f'Datos actualizados a: {_format(observation_date)}')
-    frame = _enriched(model, details, observation_date)
+    frame = _enriched(model, details, observation_date, allowed_stages)
     unknown = frame['_stages'].map(len).eq(0)
     show_unknown = st.toggle(f"Estado desconocido · {frame.loc[unknown, 'ID'].nunique()} máquinas", key='o2c_unknown_v16', help='Filtro de seguimiento para máquinas sin etapa LION; no añade una etapa al proceso.')
-    chosen, active = render_my_stages(labels, frame)
+    chosen, active = render_my_stages(labels, frame, locked=allowed_stages is not None)
     if show_unknown:
         active = 'Estado desconocido'
     if not chosen and (not show_unknown):

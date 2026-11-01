@@ -1,6 +1,5 @@
 from __future__ import annotations
 import streamlit as st
-from vision import design_system
 
 ROLE_KEY="vision_role";COMMERCIAL_KEY="vision_commercial";ENTERED_KEY="vision_entered";ADMIN_KEY="admin_data_mode"
 COMMERCIAL_ROLE="Comercial";MANAGER_ROLE="Manager Comercial";O2C_ROLE="O2C"
@@ -23,6 +22,9 @@ def entered_o2c():
 def current_author():
     if not st.session_state.get(ENTERED_KEY):return None
     role=st.session_state.get(ROLE_KEY)
+    subject=st.session_state.get("vision_authenticated_subject")
+    if subject:
+        return subject, role
     if role==COMMERCIAL_ROLE and st.session_state.get(COMMERCIAL_KEY):return st.session_state[COMMERCIAL_KEY],COMMERCIAL_ROLE
     if role==MANAGER_ROLE and st.session_state.get(DELEGATION_KEY):return "Manager Comercial · "+st.session_state[DELEGATION_KEY],MANAGER_ROLE
     if role==O2C_ROLE:return "Usuario O2C",O2C_ROLE
@@ -35,6 +37,25 @@ def _clear_context():
     for key in list(st.session_state):
         if key in exact or str(key).startswith(prefixes):
             st.session_state.pop(key,None)
+
+
+def bind_authenticated_profile(subject, role, scope):
+    _clear_context()
+    st.session_state[ADMIN_KEY] = False
+    st.session_state["vision_authenticated_subject"] = subject
+    st.session_state[ENTERED_KEY] = True
+    if role == "commercial":
+        st.session_state[ROLE_KEY] = COMMERCIAL_ROLE
+        st.session_state[COMMERCIAL_KEY] = scope["commercial"]
+    elif role == "commercial_manager":
+        st.session_state[ROLE_KEY] = MANAGER_ROLE
+        st.session_state[DELEGATION_KEY] = scope["delegation"]
+    else:
+        stages = list(scope["stages"])
+        st.session_state[ROLE_KEY] = O2C_ROLE
+        st.session_state[O2C_STAGES_KEY] = stages
+        st.session_state[O2C_PRIMARY_KEY] = stages[0]
+        st.session_state[O2C_ACTIVE_KEY] = "Todas mis etapas"
 
 
 def change_profile():

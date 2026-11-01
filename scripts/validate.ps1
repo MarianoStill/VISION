@@ -13,10 +13,20 @@ if (-not (Test-Path $python)) {
 Push-Location $root
 try {
     $ruffTargets = @(
+        "apps\vision\src\vision\auth.py",
+        "apps\vision\src\vision\authorization.py",
+        "apps\vision\src\vision\asgi_app.py",
         "apps\vision\src\vision\development_app.py",
+        "apps\vision\src\vision\o2c_workspace.py",
+        "apps\vision\src\vision\role_selection.py",
         "apps\vision\src\vision\data_admin.py",
+        "scripts\hash_auth_password.py",
         "scripts\regression_compare.py",
         "scripts\check.py",
+        "tests\auth\asgi_client.py",
+        "tests\auth\test_authorization.py",
+        "tests\auth\test_temporary_auth.py",
+        "tests\integration\test_asgi_auth.py",
         "tests\integration\test_check_script.py",
         "tests\integration\test_regression_compare.py",
         "tests\vision\test_development_app.py",

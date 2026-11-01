@@ -42,6 +42,8 @@ def test_startup_uses_ephemeral_synthetic_data_only():
     assert "/tmp/co-vision-dev-data" in STARTUP
     assert "tests.e2e.seed" in STARTUP
     assert "unset CO_VISION_PROOF_DB CO_VISION_PROOF_REFERENCE_DB" in STARTUP
+    assert "python -m uvicorn vision.asgi_app:app" in STARTUP
+    assert "streamlit run" not in STARTUP
     assert "/home/" not in STARTUP  # /home is network-backed; SQLite must not live there
     assert "\r" not in STARTUP
 
