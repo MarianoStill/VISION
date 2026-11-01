@@ -17,6 +17,8 @@ def test_deploy_workflow_is_manual_fail_closed_and_secretless():
     assert "id-token: write" in WORKFLOW
     assert "environment: dev" in WORKFLOW
     assert "--status success" in WORKFLOW  # requires a green Validation run for the SHA
+    assert "self-hosted, linux, x64, vision-dev-deploy" in WORKFLOW
+    assert "runs-on: ubuntu-latest" not in WORKFLOW.split("  deploy:")[1]
 
 
 def test_bicep_denies_access_by_default_and_hardens_the_site():
