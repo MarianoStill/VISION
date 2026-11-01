@@ -45,6 +45,8 @@ jobs:
           uv export --locked --all-extras --format requirements-txt --no-emit-project \
             --output-file "$RUNNER_TEMP/vision-requirements.txt"
           .venv/bin/pip-audit --strict --requirement "$RUNNER_TEMP/vision-requirements.txt"
+      - name: Compile Bicep template (offline syntax check; no Azure login or resources)
+        run: az bicep build --file deploy/azure/main.bicep --stdout > /dev/null
       - name: Verify imports resolve to this checkout
         run: |
           .venv/bin/python - <<'PY'
