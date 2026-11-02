@@ -49,7 +49,10 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   location: location
   tags: tags
   kind: 'linux'
-  sku: { name: skuName }
+  sku: {
+    name: skuName
+    capacity: 1
+  }
   properties: { reserved: true }
 }
 

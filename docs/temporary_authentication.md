@@ -42,8 +42,18 @@ the App Service authentication boundary.
    returning a service-unavailable response when at capacity. Passwords and cookie values are not
    logged.
 
-The session registry and throttling are in process memory. A restart invalidates all sessions;
-multiple workers/instances are not supported. Use one App Service instance only.
+The session registry, CSRF nonces, and login throttling are process-local memory, not durable
+storage. A process restart clears them: existing cookies are rejected and users must sign in again.
+Rotating the signing secret also invalidates existing cookies. Logout revokes a session only in
+the process that owns its registry. Expiration is checked on each request; expired entries are
+pruned when new sessions are issued, and outstanding CSRF nonces are pruned on form requests.
+
+The prepared Azure DEV configuration explicitly runs Uvicorn with one worker and sets the
+App Service plan capacity to one instance. Do not increase either setting: separate worker or
+instance registries would reject sessions on a different process and could not propagate logout
+revocation. This is acceptable only for the synthetic, single-instance DEV demo. Scaling requires
+a shared session/revocation store and a separately reviewed design; sticky routing alone does not
+make logout revocation consistent.
 
 ## Server-side authorization and data scope
 
@@ -54,7 +64,7 @@ sessions cannot use the development role picker or toggle Administrator mode.
 | --- | --- | --- |
 | `commercial` | `commercial`: exact existing LION commercial value | Filter the server-side source model and details before the UI renders. |
 | `commercial_manager` | `delegation`: exact existing delegation value | Apply the existing LION delegation scope to the server-side model/details. |
-| `o2c` | `stages`: explicit existing stage labels | Filter server-side rows by PROOF/LION-owned stage outputs; limit stage choices and displayed labels to that assignment. O2C PROOF history is currently withheld because an approved history-scope contract is absent. |
+| `o2c` | `stages`: explicit existing stage labels | Filter server-side rows by PROOF/LION-owned stage outputs; limit stage choices, current-state detail, progress timeline, and displayed labels to that assignment. O2C PROOF history is currently withheld because an approved history-scope contract is absent. |
 | `o2c_manager_sales_director` | `stages`: explicit existing stage labels | Same current O2C read scope. No manager/sales-director privilege is inferred. |
 
 `administrator` is deliberately not a supported authenticated role. Missing roles, unknown roles,
@@ -63,9 +73,12 @@ the exact labels emitted by the existing module. No stages or business permissio
 
 The current row-level scope can still expose other attributes of a machine that matches an assigned
 O2C stage. The product owner must decide whether cross-stage machine visibility is acceptable;
-until then, use synthetic data only. Commercial and manager history/report paths receive their
-already scoped current model. Revisit all detail, export, comment, report, and history paths before
-any real data is approved.
+until then, use synthetic data only. O2C detail timelines are limited to assigned stage labels and
+do not show overall process position. Commercial and manager history/report paths receive their
+already scoped current model. One business decision remains: whether comments/notes are shared
+across roles for a machine visible through an assigned scope, or need role-specific filtering.
+Current prototype comments are shared; do not use real or confidential notes until that policy is
+approved. Review any future export, report, and history paths before real data is approved.
 
 ## Required configuration
 

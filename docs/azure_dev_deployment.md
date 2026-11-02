@@ -13,7 +13,7 @@ flowchart LR
   val -->|green for exact SHA| dep[Deploy DEV workflow<br/>manual, environment dev, OIDC]
   dep -->|zip + locked requirements| app
   subgraph rg[Azure resource group: vision-dev]
-    plan[App Service plan Linux B1] --> app[Web App: Streamlit<br/>deploy/azure/startup.sh]
+    plan[App Service plan Linux B1<br/>capacity 1] --> app[Web App: Streamlit<br/>one Uvicorn worker]
     app --> tmp[(/tmp synthetic data<br/>re-seeded each start)]
     app -->|HTTP + console logs| law[Log Analytics<br/>30 d, daily cap]
   end
@@ -136,6 +136,11 @@ with the web app's managed identity, never GitHub secrets or the repository.
 - Persistence: none by design. Data is re-seeded on every start under `/tmp`. SQLite must **not** be
   placed under `/home` (network-backed storage) or shared across instances; keep one instance. Durable
   data requires an approved managed-database adapter first.
+- The Bicep plan pins capacity to one instance and `startup.sh` starts exactly one Uvicorn worker.
+  Do not scale the plan or change worker count: authentication sessions, CSRF nonces, and logout
+  revocation are process-local. A different worker/instance would not share that state. Any scale-out
+  requires a reviewed shared session/revocation store; client affinity is not a substitute for
+  shared logout revocation.
 - Restart/recovery: App Service restarts a failing instance from the health check; startup re-seeds in
   seconds. A cold start after a platform restart takes roughly a minute (dependency load).
 

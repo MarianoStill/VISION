@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from urllib.parse import urlencode
@@ -6,7 +7,7 @@ import pytest
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.responses import PlainTextResponse
-from starlette.routing import Route
+from starlette.routing import Route, WebSocketRoute
 from vision.auth import (
     CSRF_COOKIE,
     SESSION_COOKIE,
@@ -94,6 +95,25 @@ def test_signed_session_is_server_validated_and_expires(service):
     )
     assert service.authenticate({SESSION_COOKIE: token + "tampered"}, now=1001) is None
     assert service.authenticate({"vision_session": "not-a-token"}, now=1001) is None
+
+
+def test_restart_and_signing_secret_rotation_invalidate_sessions(service):
+    principal = service.authenticate_password("qa-commercial", PASSWORD)
+    assert principal is not None
+    token = service.issue_session(principal)
+    cookies = {SESSION_COOKIE: token}
+
+    restarted_provider = TemporaryCookieProvider(service.settings)
+    assert restarted_provider.authenticate(cookies) is None
+
+    rotated_settings = AuthSettings(
+        secret=b"rotated-session-secret-with-32-bytes",
+        public_origin=service.settings.public_origin,
+        users=service.settings.users,
+        session_seconds=service.settings.session_seconds,
+    )
+    rotated_provider = TemporaryCookieProvider(rotated_settings)
+    assert rotated_provider.authenticate(cookies) is None
 
 
 def test_password_authentication_and_hash_requirements(service):
@@ -220,6 +240,77 @@ def test_unauthorized_access_and_cross_site_login_are_rejected(
     )
     assert response.status_code == 403
     assert request(app, "GET", "https://vision.example.test/").status_code == 303
+
+
+def test_websocket_authentication_rejects_anonymous_and_accepts_valid_session(
+    service, authorization_registry
+):
+    async def socket_endpoint(websocket):
+        await websocket.accept()
+        await websocket.close(code=1000)
+
+    app = Starlette(
+        routes=[WebSocketRoute("/socket", socket_endpoint)],
+        middleware=[
+            Middleware(
+                AuthenticationMiddleware,
+                service=service,
+                authorization_registry=authorization_registry,
+            )
+        ],
+    )
+
+    def run_socket(cookies=None):
+        headers = []
+        if cookies:
+            headers.append(
+                (
+                    b"cookie",
+                    "; ".join(
+                        f"{key}={value}" for key, value in cookies.items()
+                    ).encode(),
+                )
+            )
+        events = []
+        connected = False
+
+        async def receive():
+            nonlocal connected
+            if not connected:
+                connected = True
+                return {"type": "websocket.connect"}
+            return {"type": "websocket.disconnect", "code": 1000}
+
+        async def send(event):
+            events.append(event)
+
+        scope = {
+            "type": "websocket",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "scheme": "wss",
+            "path": "/socket",
+            "raw_path": b"/socket",
+            "query_string": b"",
+            "root_path": "",
+            "headers": headers,
+            "client": ("127.0.0.1", 50000),
+            "server": ("vision.example.test", 443),
+            "subprotocols": [],
+        }
+        asyncio.run(app(scope, receive, send))
+        return events
+
+    anonymous_events = run_socket()
+    assert anonymous_events == [{"type": "websocket.close", "code": 1008}]
+
+    principal = service.authenticate_password("qa-commercial", PASSWORD)
+    assert principal is not None
+    token = service.issue_session(principal)
+    authenticated_events = run_socket({SESSION_COOKIE: token})
+    assert any(event["type"] == "websocket.accept" for event in authenticated_events)
+    assert authenticated_events[-1]["type"] == "websocket.close"
+    assert authenticated_events[-1]["code"] == 1000
 
 
 def test_opaque_origin_is_only_accepted_for_loopback_development(auth_env):

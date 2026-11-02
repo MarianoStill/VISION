@@ -24,4 +24,5 @@ python -m tests.e2e.seed "$CO_VISION_DATA_ROOT"
 
 exec python -m uvicorn vision.asgi_app:app \
   --host 0.0.0.0 \
-  --port "${PORT:-8000}"
+  --port "${PORT:-8000}" \
+  --workers 1

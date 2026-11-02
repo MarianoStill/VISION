@@ -1,8 +1,11 @@
 """Guardrails for the prepared (not executed) Azure DEV deployment files."""
+
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = (ROOT / ".github" / "workflows" / "deploy-dev.yml").read_text(encoding="utf-8")
+WORKFLOW = (ROOT / ".github" / "workflows" / "deploy-dev.yml").read_text(
+    encoding="utf-8"
+)
 BICEP = (ROOT / "deploy" / "azure" / "main.bicep").read_text(encoding="utf-8")
 STARTUP = (ROOT / "deploy" / "azure" / "startup.sh").read_text(encoding="utf-8")
 
@@ -36,6 +39,7 @@ def test_bicep_denies_access_by_default_and_hardens_the_site():
     ):
         assert setting in BICEP
     assert "workspaceCapping" in BICEP
+    assert "capacity: 1" in BICEP
 
 
 def test_startup_uses_ephemeral_synthetic_data_only():
@@ -43,8 +47,11 @@ def test_startup_uses_ephemeral_synthetic_data_only():
     assert "tests.e2e.seed" in STARTUP
     assert "unset CO_VISION_PROOF_DB CO_VISION_PROOF_REFERENCE_DB" in STARTUP
     assert "python -m uvicorn vision.asgi_app:app" in STARTUP
+    assert "--workers 1" in STARTUP
     assert "streamlit run" not in STARTUP
-    assert "/home/" not in STARTUP  # /home is network-backed; SQLite must not live there
+    assert (
+        "/home/" not in STARTUP
+    )  # /home is network-backed; SQLite must not live there
     assert "\r" not in STARTUP
 
 
