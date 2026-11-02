@@ -11,7 +11,7 @@ The modules are designed to be developed and tested separately and integrated wh
 The local development workflow migrates the received copies of LION and PROOF. It is not a production release: LION's identity with Azure is unverified, business rules are not approved, and there is no SAP connection. See [docs/local_data_workflow.md](docs/local_data_workflow.md).
 
 See [docs/architecture.md](docs/architecture.md), [docs/testing.md](docs/testing.md) (tests, UI automation, skips, CI), [docs/business_rules.md](docs/business_rules.md), [docs/data_contract.md](docs/data_contract.md), and [docs/release_process.md](docs/release_process.md).
-The Azure development deployment is only a gated proposal; see [docs/azure_dev_deployment.md](docs/azure_dev_deployment.md). No Azure resources or production deployment are configured.
+The Azure DEV deployment (App Service, synthetic data) is prepared but not executed or enabled; see [docs/azure_dev_deployment.md](docs/azure_dev_deployment.md). No Azure resources, credentials, or production deployment are configured.
 
 ## Development environment and technical check
 

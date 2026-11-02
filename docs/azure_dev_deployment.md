@@ -1,124 +1,182 @@
-# VISION Azure development deployment proposal
+# VISION Azure DEV deployment (prepared, not executed)
 
-**Status: proposal only; no Azure resources or deployment are authorized or configured.**
-This is a technical readiness note for an online DEV demonstration using synthetic data.
-It is not a production design, security approval, or estimate from KION's Azure agreement.
+**Status: preparation only. No Azure resource exists, no credential is configured, nothing has been
+deployed, and no cost has been incurred.** This replaces the earlier Container Apps proposal: for one
+Streamlit app with synthetic data, Azure App Service is simpler and cheaper (no registry, no image
+build, built-in health check, HTTPS, access restrictions and optional built-in authentication).
 
-## Recommended DEV architecture
+## Architecture
 
-1. Build the application from this repository into an immutable Linux container image.
-2. Push the image to Azure Container Registry (Basic is sufficient for a small DEV image).
-3. Run one Azure Container Apps app in a Consumption environment, with Streamlit on port
-   `8501`. Use external ingress only after Entra authentication is configured and approved;
-   otherwise use internal ingress plus an IT-approved VPN or private network.
-4. Put Azure Container Apps Authentication in front of Streamlit using the organization-owned
-   Entra application and assigned users/groups. The in-app role picker is navigation only:
-   it is not authentication, authorization, or data isolation.
-5. Run the synthetic test data only. Re-seed a disposable local container directory on startup;
-   do not put SAP workbooks, corporate identifiers, production data, or credentials in the
-   image, repository, CI artifacts, or DEV environment.
-6. Send platform logs to Azure Monitor with a short, approved retention period. Use managed
-   identity for Azure resource access. There are no application secrets currently required.
+```mermaid
+flowchart LR
+  dev[Developer] -->|PR| gh[GitHub repo]
+  gh -->|push/PR| val[Validation workflow<br/>ruff, audit, tests, Playwright, diff vs main]
+  val -->|green for exact SHA| dep[Deploy DEV workflow<br/>manual, environment dev, OIDC]
+  dep -->|zip + locked requirements| app
+  subgraph rg[Azure resource group: vision-dev]
+    plan[App Service plan Linux B1] --> app[Web App: Streamlit<br/>deploy/azure/startup.sh]
+    app --> tmp[(/tmp synthetic data<br/>re-seeded each start)]
+    app -->|HTTP + console logs| law[Log Analytics<br/>30 d, daily cap]
+  end
+  user[Approved users] -->|HTTPS via IT-approved IPs/VPN and, later, Entra login| app
+  runner[Dedicated isolated GitHub runner<br/>inside approved network] -->|OIDC + ZIP deploy via SCM/Kudu| app
+  entra[Entra ID app registration<br/>owned by IT] -.-> app
+```
 
-For CI/CD, GitHub Actions should authenticate to Azure using workload identity federation
-(OIDC), build and push an image tagged by commit, and deploy that immutable digest to DEV.
-Do not add a client secret to GitHub or the repository. Promotion to TEST/PROD is out of
-scope; the existing release policy requires human approval and promotion of the exact digest
-validated in TEST.
+Deliberately **not** included: Container Registry, Key Vault, Application Insights, databases,
+storage accounts, VNet/private endpoints, Front Door. None is needed for a synthetic-data demo.
+Add them only through an IT-approved change.
 
-## Resources and indicative monthly cost
+## Files
 
-| Resource | DEV purpose | Indicative monthly estimate |
-| --- | --- | ---: |
-| Container Apps Consumption | One 0.25-vCPU / 0.5-GiB replica | ~$19.71 if continuously active for 730 hours; less if scaled to zero |
-| Azure Container Registry Basic | Store the small image | ~$5 |
-| Log Analytics | Budget 1 GB ingestion | ~$2.76 |
-| Azure Files | **Not recommended for the current SQLite database** | Not included |
-| **Always-on demo subtotal** | Before tax, egress, and organization discounts | **~$28/month** |
+| File | Purpose |
+| --- | --- |
+| `deploy/azure/main.bicep` | Plan, web app (system-assigned identity), Log Analytics, diagnostics. Compiled offline in CI (`az bicep build`); never applied by CI. |
+| `deploy/azure/startup.sh` | App Service startup command: sets `PYTHONPATH`, seeds **synthetic** data into `/tmp`, starts Streamlit on `0.0.0.0:$PORT`. |
+| `.github/workflows/deploy-dev.yml` | Manual deploy and rollback workflow. Inert until enabled (see below). |
+| `tests/integration/test_deploy_config.py` | Guardrails: manual-only, secretless, fail-closed, deny-by-default, hardened settings. |
+| `uv.lock` | Source of the locked runtime requirements exported into the package. |
 
-The Container Apps figure uses public East US example rates ($0.000024 per active vCPU-second
-and $0.000003 per GiB-second): `0.25 × 730 × 3600 × 0.000024` plus
-`0.5 × 730 × 3600 × 0.000003` = about $19.71. A zero-minimum-replica app has no compute
-charge while scaled to zero, but has cold-start delay; active usage is billed and subscription
-free grants, if available, are shared across the subscription. Registry and log figures are
-rounded public retail estimates, not a quote. Region, currency, billing agreement, network
-traffic, log volume/retention, image storage, and other subscription usage can materially
-change the total. Confirm with the [Azure Pricing Calculator](https://azure.microsoft.com/en-us/pricing/calculator/)
-and the KION Azure owner before provisioning.
-
-Pricing references: [Container Apps](https://azure.microsoft.com/en-us/pricing/details/container-apps/),
-[Container Registry](https://azure.microsoft.com/en-us/pricing/details/container-registry/),
-[Azure Monitor](https://azure.microsoft.com/en-us/pricing/details/monitor/).
+Security defaults in the template: HTTPS only, TLS 1.2, FTPS disabled, SCM site restricted, **default
+action Deny** for the site and SCM. SCM/Kudu explicitly reuses the main site's approved CIDR rules
+(`scmIpSecurityRestrictionsUseMain: true`); the deployment runner must originate from one of those
+allowed network ranges. The `allowedCidrs` parameter has no default, so the app is never public by
+accident. WebSockets on (required by Streamlit), Always On, health check
+`/_stcore/health`, no client affinity, no secrets in app settings.
 
 ## Configuration and secrets
 
-| Setting | DEV use |
-| --- | --- |
-| `CO_VISION_DATA_ROOT` | Disposable synthetic data root; must be outside the image's read-only application files |
-| `CO_VISION_PROOF_DB` | Optional path for the synthetic PROOF SQLite database |
-| `CO_VISION_PROOF_REFERENCE_DB` | Leave unset for the synthetic online demo |
-| `CO_VISION_TIMEZONE` | Set only after the product owner approves the intended timezone |
-| Entra configuration | Configure in ACA Authentication using the IT-owned app registration; do not invent tenant IDs, client IDs, or group assignments |
+| Setting | Where | Value |
+| --- | --- | --- |
+| `SCM_DO_BUILD_DURING_DEPLOYMENT` | App setting (Bicep) | `true` (Oryx installs `requirements.txt`) |
+| `WEBSITES_PORT` | App setting (Bicep) | `8000` |
+| `CO_VISION_DATA_ROOT` | App setting (Bicep) | `/tmp/co-vision-dev-data` (ephemeral, synthetic) |
+| `CO_VISION_PROOF_DB`, `CO_VISION_PROOF_REFERENCE_DB` | Never set in DEV | `startup.sh` unsets them |
+| `CO_VISION_TIMEZONE` | Only if the product owner approves one | - |
 
-No secret values should be supplied until IT defines the approved identity flow. If a secret is
-unavoidable, store it in Azure Key Vault or ACA-managed secrets and grant access through a
-managed identity. Never expose it to browser JavaScript, Streamlit output, logs, or test
-artifacts.
+**Application secrets required today: none.** GitHub secrets: none. The workflow uses OIDC and these
+non-secret repository/environment **variables**: `AZURE_DEV_DEPLOY_ENABLED`, `AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_DEV_WEBAPP_NAME`, `AZURE_DEV_RESOURCE_GROUP`, and
+optionally `AZURE_DEV_SMOKE_URL`. If a secret ever becomes unavoidable, use Key Vault references
+with the web app's managed identity, never GitHub secrets or the repository.
+
+## Authentication and access control (decision for IT)
+
+- The in-app role picker (Commercial/Manager/O2C/Administrator) is **navigation, not authorization**.
+  Anyone who reaches the URL can choose Administrator. Therefore: synthetic data only, and the
+  network gate (allowed IPs/VPN) is mandatory until real authentication exists.
+- Recommended path once IT authorizes it: App Service Authentication (Entra) with "require
+  authentication", user/group assignment on the enterprise application, then server-side mapping of
+  groups to roles in a reviewed code change. Neither SSO nor Entra is implemented or configured here.
+- No corporate/personal credentials are used by the app or by CI. The managed identity has no role
+  assignments and needs none.
+
+## CI/CD flow and rollback
+
+1. PR to `main` -> `Validation` (ruff, pip-audit, canonical check, tests + coverage, Bicep compile,
+   Playwright, differential run against `main`). Branch protection should require it.
+2. After merge, an authorized person runs **Deploy DEV (Azure App Service)** with `ref` = tag or SHA.
+   The `gate` job refuses unless a successful `Validation` run exists for that exact commit.
+3. The `deploy` job runs only on the dedicated self-hosted runner labelled
+   `self-hosted, linux, x64, vision-dev-deploy`. IT must host it inside the approved corporate/VPN
+   network, with outbound egress included in `allowedCidrs`. It uses GitHub Environment `dev`
+   (configure required reviewers there), signs in with OIDC, builds the package from `uv.lock`,
+   deploys through SCM/Kudu, and verifies the app reports `Running`. If `AZURE_DEV_SMOKE_URL` is set
+   it also polls `/_stcore/health` from that same network. GitHub-hosted runners are deliberately
+   not used for deployment because their IP ranges are broad/dynamic and GitHub advises against
+   allowlisting them for internal resources; App Service's own health check (`healthCheckPath`)
+   remains enabled.
+4. **Rollback:** re-run the workflow with the previous known-good tag/SHA (it must also have a green
+   Validation run). Tag each deployed commit (e.g. `dev-YYYYMMDD-n`). Deployment slots (swap) would
+   need Standard (S1, ~$70/month) and are not worth it for DEV.
+5. PROD is out of scope. Promotion must follow `docs/release_process.md` (same artifact validated in
+   TEST, human approval).
 
 ## Health, readiness, persistence
 
-- Streamlit's `/_stcore/health` is a technical process liveness endpoint and is used by the
-  Playwright harness. It does **not** prove that SAP data, PROOF history, identity claims, or
-  business readiness are available.
-- Azure Container Apps supports startup, liveness, and readiness probes. A probe against
-  `/_stcore/health` can check that Streamlit responds; it cannot represent data readiness.
-  Add a separate, deliberately limited readiness signal before any deployment that depends
-  on initialization or persistent storage. Do not expose paths, row counts, or data values
-  from health endpoints.
-- Container-local storage is ephemeral across replica replacement. The DEV synthetic demo
-  can be re-seeded and needs no persistent volume.
-- The current engine stores PROOF in SQLite. Do not place that database on an Azure Files
-  network share or share it between replicas without a supported file-locking/backup test.
-  For durable multi-user data, first approve and implement a managed database adapter,
-  migration plan, backups, restore tests, and access controls. This repository does not
-  provide those today.
+- `/_stcore/health` is process liveness only; it says nothing about data. Do not add paths or counts
+  to it. A data-readiness endpoint is not needed for the synthetic demo; add one only when real
+  sources exist.
+- Persistence: none by design. Data is re-seeded on every start under `/tmp`. SQLite must **not** be
+  placed under `/home` (network-backed storage) or shared across instances; keep one instance. Durable
+  data requires an approved managed-database adapter first.
+- Restart/recovery: App Service restarts a failing instance from the health check; startup re-seeds in
+  seconds. A cold start after a platform restart takes roughly a minute (dependency load).
 
-References: [ACA health probes](https://learn.microsoft.com/en-us/azure/container-apps/health-probes),
-[storage mounts](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts),
-[ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview),
-[authentication](https://learn.microsoft.com/en-us/azure/container-apps/authentication).
+## Monthly cost estimate (indicative, public retail, not a quote)
 
-## Security and environment boundaries
+Conversion used: 1 USD is about 0.86 EUR. Prices vary by region/agreement; confirm in the
+[Azure Pricing Calculator](https://azure.microsoft.com/pricing/calculator/) and with the KION Azure owner.
 
-- The application has no corporate authentication or server-enforced authorization. A user
-  can choose Commercial, Manager, O2C, or Administrator in the UI; those labels do not prove
-  identity or protect routes/data. Do not publish it to the public internet or use real
-  business data until IT-approved authentication, group-to-role mapping, and server-side
-  authorization are implemented and tested.
-- Local `.streamlit/config.toml` binds to `127.0.0.1`. ACA must explicitly bind Streamlit to
-  `0.0.0.0` inside its container; that is safe only behind the approved ingress and auth
-  layer. Local development remains loopback-only.
-- DEV must use synthetic data and separate storage/configuration from TEST and PROD. No
-  production resource, secret, SAP integration, or Entra registration is configured.
-- The administrative screen now displays logical paths/basenames instead of absolute
-  filesystem paths. This reduces accidental disclosure but is not an access-control boundary.
-- A `pip-audit` scan of the locked dependency export on 2026-11-01 reported no known
-  vulnerabilities. GitHub Dependabot alerts are disabled for this repository; that scan is
-  a point-in-time result, not continuous monitoring.
+| Resource | Billing | Typical / month | Worst case with configured limits |
+| --- | --- | ---: | ---: |
+| App Service plan Linux **B1** (always on, 1 vCore, 1.75 GB) | Recurring (hourly) | ~$13 (~EUR 11) | same |
+| Web app, managed identity, health check, HTTPS, IP restrictions, built-in Entra auth | Free (included in plan) | $0 | $0 |
+| Log Analytics ingestion/retention | Consumption; first 5 GB/month per billing account is typically free; cap 0.2 GB/day | $0-3 | ~$16 (6 GB at ~$2.76/GB) |
+| Storage | None used | $0 | $0 |
+| Outbound traffic | First 100 GB/month free | ~$0 | small |
+| GitHub Actions | Repo is private: uses the plan's included minutes (a run is about 6 min) | $0 within quota | plan-dependent |
+| Entra app registration / OIDC federation / Bicep | Free | $0 | $0 |
+| **Total** | | **~$13-16 (~EUR 11-14)** | **~$30 (~EUR 26)** |
 
-## Gates before an online DEV deployment
+Well inside the EUR 200/month ceiling, which is a limit, not a commitment. Not included:
+**Azure Developer support (about $29/month) is a separate subscription-level charge**, not part of this
+infrastructure estimate; tax, support plans and any enterprise discount are also excluded. Resources
+with recurring charges: the App Service plan (even if the app is stopped) and Log Analytics. Delete the
+resource group to stop all charges. Set an Azure Budget alert (for example EUR 50) before provisioning.
 
-1. IT/project owner approves the Azure subscription, region, resource group, cost center,
-   network exposure, retention, and budget alert.
-2. IT provisions or approves the Entra app registration, authentication policy, allowed
-   users/groups, and claim contract. No SSO or Entra configuration is implemented here.
-3. Product/security owners confirm the DEV demo is synthetic-only and decide whether
-   persistence is required. If it is, approve a managed database design rather than assuming
-   the current SQLite file can be hosted safely.
-4. Define a container build, immutable image digest, OIDC federated deployment identity,
-   environment-specific configuration, logs, and rollback procedure in a reviewed change.
-5. Define startup/liveness/readiness probe behavior and test restart, cold start, and error
-   states. The current `/_stcore/health` check is only process health.
+## What IT must provide or decide
 
-Until those gates are met, the branch is **not ready for an online or production deployment**.
-It is suitable for continued local development and CI with synthetic fixtures only.
+1. Subscription, region, resource group `vision-dev`, naming, tags, cost center, and a budget alert.
+2. Permission to create the resources above (Contributor on the resource group is sufficient; no
+   subscription-level rights needed).
+3. An identity for GitHub: a user-assigned identity or app registration with a **federated credential**
+   for `repo:MarianoStill/VISION:environment:dev`, with Contributor (or Website Contributor plus Reader)
+   scoped to the resource group only. No client secret.
+4. The allowed CIDR ranges (corporate egress/VPN) for `allowedCidrs`, and whether GitHub runners may reach
+   the app for the smoke test.
+5. Entra app registration and policy for App Service Authentication, allowed users/groups, claim contract.
+6. Confirmation that a private-repo GitHub-to-Azure OIDC integration and a Python 3.13 App Service
+   runtime are acceptable/available (`az webapp list-runtimes --os linux`).
+8. Log retention/privacy requirement and who owns monitoring and alerts.
+9. Confirmation that DEV contains synthetic data only; any real data requires a separate approval.
+
+## First deployment steps (after the gates above; none executed)
+
+1. IT creates the resource group and the federated identity; the owner sets a budget alert.
+2. Provision: `az deployment group create -g vision-dev -f deploy/azure/main.bicep -p webAppName=<unique> allowedCidrs='["<cidr>"]'`
+   (use `--what-if` first). Review the output.
+3. In GitHub: create Environment `dev` with required reviewers; add the variables listed above; finally set
+   `AZURE_DEV_DEPLOY_ENABLED=true`.
+4. Register the dedicated runner with the labels above, confirm its outbound IP is in `allowedCidrs`,
+   then run **Deploy DEV** with the validated `main` SHA; approve the environment gate.
+5. From an allowed network, open the app, check `/_stcore/health`, and exercise each profile with
+   synthetic data. Tag the commit; record it as the rollback target.
+6. When IT approves, configure App Service Authentication and remove any reliance on the IP gate alone.
+
+## Risks and limitations
+
+- No real authentication or server-side authorization yet; the IP/VPN gate is the only barrier. The
+  Administrator screen can be selected by any reachable user (synthetic data only, destructive actions
+  affect only disposable `/tmp` data).
+- Deployment requires IT to provide and maintain the dedicated self-hosted runner in the approved
+  network. If it is offline or its egress CIDR changes, deployment/smoke tests will fail closed.
+- Not validated against a real Azure subscription: the Bicep file is syntax-checked in CI only, the
+  Python 3.13 runtime and Oryx build of the exported `requirements.txt` are untested on App Service, and
+  the cost figures are public estimates. Expect adjustments on the first dry run (`--what-if`).
+- B1 is a single shared-tenant instance: no autoscale, no SLA-grade redundancy, no slots; downtime during
+  restarts/deploys is expected.
+- Ephemeral data: every restart resets state, including notes/comments entered in the demo.
+- Dependency scanning is point-in-time (`pip-audit` in CI); Dependabot alerts are disabled in the repo.
+- Streamlit's XSRF/CORS protections are left enabled; do not disable them to work around proxy issues.
+- Differences from PROD (future): real identity and RBAC, real data sources behind approval, managed
+  database with backups, private networking, TEST-to-PROD promotion of the same artifact, slots/redundancy,
+  and an incident/monitoring process. None of that exists yet.
+
+References: [App Service Python](https://learn.microsoft.com/azure/app-service/configure-language-python),
+[health check](https://learn.microsoft.com/azure/app-service/monitor-instances-health-check),
+[access restrictions](https://learn.microsoft.com/azure/app-service/app-service-ip-restrictions),
+[App Service authentication](https://learn.microsoft.com/azure/app-service/overview-authentication-authorization),
+[GitHub OIDC with Azure](https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect),
+[App Service pricing](https://azure.microsoft.com/pricing/details/app-service/linux/),
+[Azure Monitor pricing](https://azure.microsoft.com/pricing/details/monitor/).
