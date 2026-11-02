@@ -1,9 +1,8 @@
 # VISION Azure DEV deployment (prepared, not executed)
 
-**Status: preparation only. No Azure resource exists, no credential is configured, nothing has been
-deployed, and no cost has been incurred.** This replaces the earlier Container Apps proposal: for one
-Streamlit app with synthetic data, Azure App Service is simpler and cheaper (no registry, no image
-build, built-in health check, HTTPS, access restrictions and optional built-in authentication).
+**Status: code prepared only. No Azure resource exists, no credential is configured, nothing has been
+deployed, and no cost has been incurred.** This uses one Linux App Service and a same-process ASGI
+authentication layer; no container registry, database, or separate identity gateway is needed.
 
 ## Architecture
 
@@ -14,13 +13,13 @@ flowchart LR
   val -->|green for exact SHA| dep[Deploy DEV workflow<br/>manual, environment dev, OIDC]
   dep -->|zip + locked requirements| app
   subgraph rg[Azure resource group: vision-dev]
-    plan[App Service plan Linux B1] --> app[Web App: Streamlit<br/>deploy/azure/startup.sh]
+    plan[App Service plan Linux B1<br/>capacity 1] --> app[Web App: Streamlit<br/>one Uvicorn worker]
     app --> tmp[(/tmp synthetic data<br/>re-seeded each start)]
     app -->|HTTP + console logs| law[Log Analytics<br/>30 d, daily cap]
   end
-  user[Approved users] -->|HTTPS via IT-approved IPs/VPN and, later, Entra login| app
+  user[Approved DEV test users] -->|HTTPS + signed VISION session cookie| app
   runner[Dedicated isolated GitHub runner<br/>inside approved network] -->|OIDC + ZIP deploy via SCM/Kudu| app
-  entra[Entra ID app registration<br/>owned by IT] -.-> app
+  entra[Future Entra ID<br/>IT-owned; not implemented] -.-> app
 ```
 
 Deliberately **not** included: Container Registry, Key Vault, Application Insights, databases,
@@ -32,9 +31,14 @@ Add them only through an IT-approved change.
 | File | Purpose |
 | --- | --- |
 | `deploy/azure/main.bicep` | Plan, web app (system-assigned identity), Log Analytics, diagnostics. Compiled offline in CI (`az bicep build`); never applied by CI. |
-| `deploy/azure/startup.sh` | App Service startup command: sets `PYTHONPATH`, seeds **synthetic** data into `/tmp`, starts Streamlit on `0.0.0.0:$PORT`. |
+| `deploy/azure/startup.sh` | Requires auth configuration, pins destructive reseeding to `/tmp/co-vision-dev-data`, and serves the `st.App` entrypoint with Uvicorn on `0.0.0.0:$PORT`. |
+| `apps/vision/src/vision/auth.py` | Temporary signed-cookie identity provider, login/logout routes, and ASGI request gate. |
+| `apps/vision/src/vision/authorization.py` | Separate user-to-role/scope registry and server-side row/stage filtering. |
+| `apps/vision/src/vision/asgi_app.py` | Composes the Streamlit UI with the login routes and authentication middleware. |
+| `scripts/hash_auth_password.py` | Interactive local PBKDF2 hash generation; prints only the hash. |
+| `docs/temporary_authentication.md` | User registry, configuration, roles/scopes, limitations, and Entra migration boundary. |
 | `.github/workflows/deploy-dev.yml` | Manual deploy and rollback workflow. Inert until enabled (see below). |
-| `tests/integration/test_deploy_config.py` | Guardrails: manual-only, secretless, fail-closed, deny-by-default, hardened settings. |
+| `tests/auth/`, `tests/integration/test_asgi_auth.py` | Session, cookie, login/logout, role/scope, config, middleware, and ASGI composition tests. |
 | `uv.lock` | Source of the locked runtime requirements exported into the package. |
 
 Security defaults in the template: HTTPS only, TLS 1.2, FTPS disabled, SCM site restricted, **default
@@ -42,7 +46,8 @@ action Deny** for the site and SCM. SCM/Kudu explicitly reuses the main site's a
 (`scmIpSecurityRestrictionsUseMain: true`); the deployment runner must originate from one of those
 allowed network ranges. The `allowedCidrs` parameter has no default, so the app is never public by
 accident. WebSockets on (required by Streamlit), Always On, health check
-`/_stcore/health`, no client affinity, no secrets in app settings.
+`/_stcore/health`, no client affinity. Signing keys and test-user configuration are not in Bicep,
+the workflow, or Git.
 
 ## Configuration and secrets
 
@@ -52,24 +57,55 @@ accident. WebSockets on (required by Streamlit), Always On, health check
 | `WEBSITES_PORT` | App setting (Bicep) | `8000` |
 | `CO_VISION_DATA_ROOT` | App setting (Bicep) | `/tmp/co-vision-dev-data` (ephemeral, synthetic) |
 | `CO_VISION_PROOF_DB`, `CO_VISION_PROOF_REFERENCE_DB` | Never set in DEV | `startup.sh` unsets them |
+| `VISION_AUTH_MODE` | App setting (Bicep) | `temporary` |
+| `VISION_AUTH_PUBLIC_ORIGIN` | App setting (Bicep) | HTTPS default App Service hostname |
+| `VISION_AUTH_COOKIE_SECRET` | Protected App Service setting / approved Key Vault reference | Random secret, at least 32 bytes; required |
+| `VISION_TEMP_USERS_JSON` | Protected App Service setting / approved Key Vault reference | Preconfigured synthetic usernames and PBKDF2 password hashes |
+| `VISION_AUTHZ_ASSIGNMENTS_JSON` | Protected App Service setting / approved Key Vault reference | Explicit role and data-scope assignments; required |
+| `VISION_AUTH_SESSION_SECONDS` | Optional App Service setting | 300–86400 seconds; default 8 hours |
 | `CO_VISION_TIMEZONE` | Only if the product owner approves one | - |
 
-**Application secrets required today: none.** GitHub secrets: none. The workflow uses OIDC and these
+**The deployment workflow needs no GitHub secrets.** It uses OIDC and these
 non-secret repository/environment **variables**: `AZURE_DEV_DEPLOY_ENABLED`, `AZURE_CLIENT_ID`,
 `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_DEV_WEBAPP_NAME`, `AZURE_DEV_RESOURCE_GROUP`, and
 optionally `AZURE_DEV_SMOKE_URL`. If a secret ever becomes unavoidable, use Key Vault references
 with the web app's managed identity, never GitHub secrets or the repository.
 
-## Authentication and access control (decision for IT)
+## Temporary authentication and access control
 
-- The in-app role picker (Commercial/Manager/O2C/Administrator) is **navigation, not authorization**.
-  Anyone who reaches the URL can choose Administrator. Therefore: synthetic data only, and the
-  network gate (allowed IPs/VPN) is mandatory until real authentication exists.
-- Recommended path once IT authorizes it: App Service Authentication (Entra) with "require
-  authentication", user/group assignment on the enterprise application, then server-side mapping of
-  groups to roles in a reviewed code change. Neither SSO nor Entra is implemented or configured here.
-- No corporate/personal credentials are used by the app or by CI. The managed identity has no role
-  assignments and needs none.
+- The App Service endpoint is restricted by IP/VPN and also requires a VISION test account. The
+  login route sets a VISION-signed cookie (`HttpOnly`, `SameSite=Strict`, `Secure` when HTTPS,
+  eight-hour expiry by default); every request/WebSocket is checked server-side. Logout revokes the
+  session in process memory and clears the cookie. Passwords are never stored: the registry accepts
+  PBKDF2-SHA256 hashes with at least 600,000 iterations. Authentication fails closed if any required
+  setting or assignment is missing.
+- `VISION_TEMP_USERS_JSON` is a controlled allowlist; there is no public registration or role picker
+  in authenticated mode. `VISION_AUTHZ_ASSIGNMENTS_JSON` is a separate authorization map. The
+  supported assignments are Commercial (one exact commercial), Commercial Manager (one exact
+  delegation), O2C (explicit stage list), and O2C Manager / Sales Director (also an explicit stage
+  list, with no extra privileges until business permissions are approved). The Administrator
+  profile is not assignable in authenticated DEV.
+- The backend constrains Commercial and Manager source rows before rendering. O2C rows, stage
+  controls, and visible stage labels are limited to the assigned stages; O2C PROOF history is
+  withheld because no approved O2C history scope contract exists. If an assigned scope does not
+  match current source options, access is denied. These are technical gates, not approval of
+  business role semantics.
+- Current user-to-data mapping and exact business permissions remain decisions for the product
+  owner. In particular, a machine matching an authorized stage may have other business attributes;
+  whether those can be shown to that role requires explicit approval. Do not configure production
+  users or real customer/SAP data in this interim mode.
+- This is **not corporate SSO**, does not reuse Microsoft cookies or tokens, and is not approved for
+  production. Test passwords and hashes must be distributed through an IT-approved secure channel;
+  no sample account is committed. A process restart invalidates sessions. The Streamlit UI rechecks
+  the session every 30 seconds; changes to an already open screen may remain visible until that
+  interval or the next interaction.
+- A future Entra provider can implement the same request-identity interface using validated
+  App-Service-authenticated claims; the authorization registry and role-scope enforcement remain
+  separate. IT must own the Entra App Registration, required claims/groups, App Service
+  Authentication set to require authentication, redirect/logout URLs and assignment policy. No
+  Entra integration is implemented here. Microsoft cookies/passwords/tokens are never read or stored.
+- The App Service managed identity has no resource role assignments and is not used for end-user
+  authentication. No corporate or personal credentials are used by the app or CI.
 
 ## CI/CD flow and rollback
 
@@ -100,6 +136,11 @@ with the web app's managed identity, never GitHub secrets or the repository.
 - Persistence: none by design. Data is re-seeded on every start under `/tmp`. SQLite must **not** be
   placed under `/home` (network-backed storage) or shared across instances; keep one instance. Durable
   data requires an approved managed-database adapter first.
+- The Bicep plan pins capacity to one instance and `startup.sh` starts exactly one Uvicorn worker.
+  Do not scale the plan or change worker count: authentication sessions, CSRF nonces, and logout
+  revocation are process-local. A different worker/instance would not share that state. Any scale-out
+  requires a reviewed shared session/revocation store; client affinity is not a substitute for
+  shared logout revocation.
 - Restart/recovery: App Service restarts a failing instance from the health check; startup re-seeds in
   seconds. A cold start after a platform restart takes roughly a minute (dependency load).
 
@@ -111,7 +152,7 @@ Conversion used: 1 USD is about 0.86 EUR. Prices vary by region/agreement; confi
 | Resource | Billing | Typical / month | Worst case with configured limits |
 | --- | --- | ---: | ---: |
 | App Service plan Linux **B1** (always on, 1 vCore, 1.75 GB) | Recurring (hourly) | ~$13 (~EUR 11) | same |
-| Web app, managed identity, health check, HTTPS, IP restrictions, built-in Entra auth | Free (included in plan) | $0 | $0 |
+| Web app, managed identity, health check, HTTPS, IP restrictions, temporary cookie auth | Free (included in plan) | $0 | $0 |
 | Log Analytics ingestion/retention | Consumption; first 5 GB/month per billing account is typically free; cap 0.2 GB/day | $0-3 | ~$16 (6 GB at ~$2.76/GB) |
 | Storage | None used | $0 | $0 |
 | Outbound traffic | First 100 GB/month free | ~$0 | small |
@@ -135,30 +176,38 @@ resource group to stop all charges. Set an Azure Budget alert (for example EUR 5
    scoped to the resource group only. No client secret.
 4. The allowed CIDR ranges (corporate egress/VPN) for `allowedCidrs`, and whether GitHub runners may reach
    the app for the smoke test.
-5. Entra app registration and policy for App Service Authentication, allowed users/groups, claim contract.
-6. Confirmation that a private-repo GitHub-to-Azure OIDC integration and a Python 3.13 App Service
+5. Approved synthetic DEV user list and role/scope mapping; secure distribution of test passwords.
+6. Temporary cookie-signing secret and protected App Service settings (or an approved Key Vault
+   reference). No credentials or hashes in GitHub variables or source files.
+7. Entra app registration and policy for future App Service Authentication, allowed users/groups,
+   claim contract, redirect URI and logout policy.
+8. Confirmation that a private-repo GitHub-to-Azure OIDC integration and a Python 3.13 App Service
    runtime are acceptable/available (`az webapp list-runtimes --os linux`).
-8. Log retention/privacy requirement and who owns monitoring and alerts.
-9. Confirmation that DEV contains synthetic data only; any real data requires a separate approval.
+9. Log retention/privacy requirement and who owns monitoring and alerts.
+10. Confirmation that DEV contains synthetic data only; any real data requires a separate approval.
 
 ## First deployment steps (after the gates above; none executed)
 
 1. IT creates the resource group and the federated identity; the owner sets a budget alert.
 2. Provision: `az deployment group create -g vision-dev -f deploy/azure/main.bicep -p webAppName=<unique> allowedCidrs='["<cidr>"]'`
    (use `--what-if` first). Review the output.
-3. In GitHub: create Environment `dev` with required reviewers; add the variables listed above; finally set
+3. Configure the protected App Service settings for the cookie secret, synthetic hashed users,
+   explicit role scopes, and any approved origin override. Do not put secret values in Bicep.
+4. In GitHub: create Environment `dev` with required reviewers; add the variables listed above; finally set
    `AZURE_DEV_DEPLOY_ENABLED=true`.
-4. Register the dedicated runner with the labels above, confirm its outbound IP is in `allowedCidrs`,
+5. Register the dedicated runner with the labels above, confirm its outbound IP is in `allowedCidrs`,
    then run **Deploy DEV** with the validated `main` SHA; approve the environment gate.
-5. From an allowed network, open the app, check `/_stcore/health`, and exercise each profile with
-   synthetic data. Tag the commit; record it as the rollback target.
-6. When IT approves, configure App Service Authentication and remove any reliance on the IP gate alone.
+6. From an allowed network, use the authorized synthetic test account, check `/_stcore/health`, and
+   confirm each account can see only its assigned synthetic scope. Tag the commit; record it as rollback target.
+7. When IT approves, integrate Entra through the identity-provider interface and separately validate
+   group-to-role/scope assignments. Do not enable Entra by reusing browser cookies or tokens.
 
 ## Risks and limitations
 
-- No real authentication or server-side authorization yet; the IP/VPN gate is the only barrier. The
-  Administrator screen can be selected by any reachable user (synthetic data only, destructive actions
-  affect only disposable `/tmp` data).
+- Temporary DEV identity is self-managed and not backed by a corporate directory. No real
+  authentication or production authorization is implemented.
+- Scope semantics are technically enforced for current Commercial, Manager, and O2C data paths, but
+  business owners have not approved the role meanings or cross-stage machine visibility.
 - Deployment requires IT to provide and maintain the dedicated self-hosted runner in the approved
   network. If it is offline or its egress CIDR changes, deployment/smoke tests will fail closed.
 - Not validated against a real Azure subscription: the Bicep file is syntax-checked in CI only, the

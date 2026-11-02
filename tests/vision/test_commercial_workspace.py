@@ -55,7 +55,9 @@ def test_confirmed_delivery_is_never_filled_from_other_fields():
         }
     )
     details = {
-        "A": pd.DataFrame({"Fecha de entrega confirmada": [pd.Timestamp("2026-05-20"), ""]}),
+        "A": pd.DataFrame(
+            {"Fecha de entrega confirmada": [pd.Timestamp("2026-05-20"), ""]}
+        ),
         "B": pd.DataFrame({"Fecha de entrega confirmada": [""]}),
     }
     assert list(confirmed_delivery_dates(model, details)) == ["20/05/2026", "—", "—"]
@@ -64,10 +66,18 @@ def test_confirmed_delivery_is_never_filled_from_other_fields():
 def _urgency_model():
     # Valores sintéticos; el color por cuartiles repartía el 49, 75 y 133 entre colores.
     rows = [
-        (-5, BLUE, "Taller"), (0, GREEN, "Taller"), (10, GREEN, "Taller"),
-        (49, GREEN, "Taller"), (49, YELLOW, "Taller"), (60, YELLOW, "Taller"),
-        (75, YELLOW, "Taller"), (75, ORANGE, "Taller"), (100, ORANGE, "Taller"),
-        (133, ORANGE, "Taller"), (133, RED, "Taller"), (500, RED, "Taller"),
+        (-5, BLUE, "Taller"),
+        (0, GREEN, "Taller"),
+        (10, GREEN, "Taller"),
+        (49, GREEN, "Taller"),
+        (49, YELLOW, "Taller"),
+        (60, YELLOW, "Taller"),
+        (75, YELLOW, "Taller"),
+        (75, ORANGE, "Taller"),
+        (100, ORANGE, "Taller"),
+        (133, ORANGE, "Taller"),
+        (133, RED, "Taller"),
+        (500, RED, "Taller"),
         (82, GREEN, "Entregadas"),
     ]
     return pd.DataFrame(rows, columns=["Urgencia", "Color urgencia", "Estado"])
@@ -78,8 +88,16 @@ def test_urgency_bands_use_inclusive_lower_bounds_from_lion_colors():
 
     assert bands == [(-5, BLUE), (0, GREEN), (49, YELLOW), (75, ORANGE), (133, RED)]
     for value, expected in {
-        -5: BLUE, -1: BLUE, 0: GREEN, 48: GREEN, 49: YELLOW, 74: YELLOW,
-        75: ORANGE, 132: ORANGE, 133: RED, 1534: RED,
+        -5: BLUE,
+        -1: BLUE,
+        0: GREEN,
+        48: GREEN,
+        49: YELLOW,
+        74: YELLOW,
+        75: ORANGE,
+        132: ORANGE,
+        133: RED,
+        1534: RED,
     }.items():
         assert urgency_color(value, bands) == expected
 
@@ -131,6 +149,18 @@ def test_advance_is_the_position_in_the_lion_stage_sequence():
     unknown = _advance("sin etapa conocida")
     assert unknown["position"] is None
     assert unknown["text"] == "Etapa no determinada"
+
+
+def test_advance_limits_o2c_detail_timeline_to_authorized_stages():
+    current_stage = "Planificando la entrega"
+    advance = _advance("Planning | Arcese", allowed_stages=[current_stage])
+
+    assert [stage["label"] for stage in advance["timeline"]] == [current_stage]
+    assert advance["states"] == [current_stage]
+    assert advance["total"] == 1
+    assert advance["position"] is None
+    assert "Etapa 7 de 10" not in advance["text"]
+    assert advance["scoped_percent"] == 50
 
 
 def test_history_segments_group_only_consecutive_equal_observations():

@@ -27,7 +27,14 @@ lion = "modules/lion/src/lion"
 vision = "apps/vision/src/vision"
 
 [tool.pytest.ini_options]
-testpaths = ["tests/proof", "tests/lion", "tests/vision", "tests/integration", "tests/regression"]
+testpaths = [
+    "tests/auth",
+    "tests/proof",
+    "tests/lion",
+    "tests/vision",
+    "tests/integration",
+    "tests/regression",
+]
 addopts = "-ra"
 markers = ["e2e: browser UI tests (Playwright); run with 'pytest tests/e2e'"]
 
