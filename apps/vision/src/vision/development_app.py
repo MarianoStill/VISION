@@ -18,14 +18,6 @@ import streamlit as st
 from openpyxl.utils.exceptions import InvalidFileException
 
 from vision import design_system, lion_adapter, o2c_workspace, role_selection
-from vision.auth import (
-    AuthConfigurationError,
-    RoleAssignment,
-    current_principal,
-    runtime_authorization_registry,
-    runtime_provider,
-)
-from vision.authorization import AuthorizationDenied, assigned_scope, restrict_rows_to_stages, visible_stages
 from vision.commercial_workspace import (
     client_options,
     commercial_options,
@@ -56,78 +48,6 @@ from vision.synthetic_examples import (
 
 st.set_page_config(page_title="VISION", layout="wide")
 design_system.inject()
-
-_auth_mode = os.environ.get("VISION_AUTH_MODE", "").strip()
-_auth_provider = None
-_auth_registry = None
-_auth_assignment: RoleAssignment | None = None
-if _auth_mode:
-    if _auth_mode != "temporary":
-        st.error("La configuración de autenticación no es válida. Contacta al responsable de DEV.")
-        st.stop()
-    try:
-        _auth_provider = runtime_provider()
-        _auth_registry = runtime_authorization_registry()
-    except AuthConfigurationError:
-        st.error("La autenticación temporal no está configurada. Contacta al responsable de DEV.")
-        st.stop()
-    _principal = current_principal(
-        st.context.cookies.to_dict(),
-        _auth_provider,
-        st.context.headers.to_dict(),
-    )
-    if _principal is None:
-        st.error("La sesión de VISION expiró o no es válida. Vuelve a iniciar sesión.")
-        st.stop()
-    _auth_assignment = _auth_registry.assignment(_principal)
-    if _auth_assignment is None:
-        st.error("Tu identidad no tiene permisos asignados para VISION.")
-        st.stop()
-    _scope = dict(_auth_assignment.scope)
-    _binding = (
-        _principal.subject,
-        _auth_assignment.role,
-        json.dumps(_scope, sort_keys=True),
-    )
-    if st.session_state.get("vision_auth_binding") != _binding:
-        for _key in list(st.session_state):
-            if str(_key).startswith("_vision_"):
-                st.session_state.pop(_key, None)
-        role_selection.bind_authenticated_profile(
-            _principal.subject, _auth_assignment.role, _scope
-        )
-        st.session_state["vision_auth_binding"] = _binding
-    st.session_state[role_selection.ADMIN_KEY] = False
-    st.session_state[role_selection.ENTERED_KEY] = True
-    if _auth_assignment.role == "commercial":
-        st.session_state[role_selection.ROLE_KEY] = role_selection.COMMERCIAL_ROLE
-        st.session_state[role_selection.COMMERCIAL_KEY] = assigned_scope(
-            _auth_assignment, "commercial"
-        )
-    elif _auth_assignment.role == "commercial_manager":
-        st.session_state[role_selection.ROLE_KEY] = role_selection.MANAGER_ROLE
-        st.session_state[role_selection.DELEGATION_KEY] = assigned_scope(
-            _auth_assignment, "delegation"
-        )
-    else:
-        st.session_state[role_selection.ROLE_KEY] = role_selection.O2C_ROLE
-        st.session_state[role_selection.O2C_STAGES_KEY] = list(
-            assigned_scope(_auth_assignment, "stages")
-        )
-
-    @st.fragment(run_every="30s")
-    def _check_temporary_session():
-        if current_principal(
-            st.context.cookies.to_dict(),
-            _auth_provider,
-            st.context.headers.to_dict(),
-        ) is None:
-            st.rerun(scope="app")
-
-    _check_temporary_session()
-    with st.sidebar:
-        st.caption(f"Sesión DEV: {_principal.subject}")
-        st.link_button("Cerrar sesión", "/auth/logout")
 
 
 @st.cache_data(ttl=60, max_entries=4, show_spinner=False)
@@ -249,10 +169,6 @@ configured_sources = resolve_external_sources()
 sap_daily_directory = configured_sources["sap_daily_dir"]
 proof_database = configured_sources["proof_db"]
 if st.session_state.get(role_selection.ADMIN_KEY):
-    if _auth_assignment is not None:
-        st.session_state[role_selection.ADMIN_KEY] = False
-        st.error("La administración de datos no está habilitada para usuarios autenticados.")
-        st.stop()
     from vision.data_admin import render_data_admin
     render_data_admin(configured_sources, _preload_coordinator_v8())
     st.stop()
@@ -458,12 +374,9 @@ def _render_proof_history(history, sales_document):
         )
 
 
-if _auth_assignment is None:
-    with st.sidebar:
-        admin_mode = st.toggle("Administración / Datos", key="admin_data_mode")
-else:
-    admin_mode = False
-mode = "Datos operacionales (DEV)"
+with st.sidebar:
+    admin_mode = st.toggle("Administración / Datos", key="admin_data_mode")
+    mode = "Datos operacionales (DEV)"
 
 _options_signature = (
     str(selected_snapshot.path), selected_snapshot.modified_ns,
@@ -489,53 +402,6 @@ if selected_delegation is not None and selected_delegation not in delegations:
     selected_delegation = None
 selected_o2c = role_selection.entered_o2c()
 o2c_labels = o2c_workspace.stage_labels()
-if _auth_assignment is not None:
-    if source_model is None:
-        st.error("No hay una fuente DEV disponible para comprobar el ámbito asignado.")
-        st.stop()
-    try:
-        if _auth_assignment.role == "commercial":
-            allowed_commercial = assigned_scope(_auth_assignment, "commercial")
-            if allowed_commercial not in commercials:
-                raise AuthorizationDenied("No existe la cartera comercial asignada en las fuentes disponibles.")
-            source_model = lion_adapter.filter_machines(
-                source_model, source_details, filters={"Comercial": allowed_commercial}, exact=True
-            )
-            allowed_ids = set(source_model["ID"])
-            source_details = {
-                identifier: frame
-                for identifier, frame in source_details.items()
-                if identifier in allowed_ids
-            }
-        elif _auth_assignment.role == "commercial_manager":
-            allowed_delegation = assigned_scope(_auth_assignment, "delegation")
-            if allowed_delegation not in delegations:
-                raise AuthorizationDenied("No existe la delegación asignada en las fuentes disponibles.")
-            source_model, source_details = scope_by_delegation(
-                source_model, source_details, allowed_delegation
-            )
-        else:
-            assigned_stages = assigned_scope(_auth_assignment, "stages")
-            allowed_stages = visible_stages(o2c_labels, assigned_stages)
-            if not allowed_stages:
-                raise AuthorizationDenied("La asignación O2C no coincide con las etapas disponibles.")
-            source_model = restrict_rows_to_stages(
-                source_model, allowed_stages, o2c_workspace.machine_stages
-            )
-            allowed_ids = set(source_model["ID"])
-            source_details = {
-                identifier: frame
-                for identifier, frame in source_details.items()
-                if identifier in allowed_ids
-            }
-            automatic_history = None
-            st.session_state[role_selection.O2C_STAGES_KEY] = allowed_stages
-            st.session_state[role_selection.O2C_PRIMARY_KEY] = allowed_stages[0]
-            st.session_state[role_selection.O2C_ACTIVE_KEY] = "Todas mis etapas"
-    except AuthorizationDenied as exc:
-        st.error(str(exc))
-        st.stop()
-
 if source_model is not None:
     if _catalog_signature is None:
         _catalog_signature = catalog_signature(sap_candidates, date.today().isoformat())
@@ -571,9 +437,7 @@ if (
 if selected_o2c:
     design_system.render_shell(
         context=("Perfil", "O2C"),
-        on_change_profile=(
-            None if _auth_assignment is not None else role_selection.change_profile
-        ),
+        on_change_profile=role_selection.change_profile,
         workspace="Operational Workspace",
     )
     if source_model is None:
@@ -584,11 +448,6 @@ if selected_o2c:
         details=source_details,
         history=automatic_history,
         observation_date=selected_snapshot.observation_date,
-        allowed_stages=(
-            visible_stages(o2c_labels, assigned_scope(_auth_assignment, "stages"))
-            if _auth_assignment is not None
-            else None
-        ),
     )
     st.stop()
 
@@ -601,9 +460,7 @@ if selected_commercial is not None or selected_delegation is not None:
             if selected_commercial is not None
             else ("Manager Comercial", selected_delegation)
         ),
-        on_change_profile=(
-            None if _auth_assignment is not None else role_selection.change_profile
-        ),
+        on_change_profile=role_selection.change_profile,
         workspace="Commercial Workspace",
     )
     page = page or "Mis clientes"

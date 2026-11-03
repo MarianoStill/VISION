@@ -11,16 +11,33 @@ import proof
 from vision import lion_adapter
 from vision.commercial_portfolio import (
     ALL_CLIENTS,
+    DELEGATION_FIELD,
     _available,
+    _machine_count,
+    _source_options,
     client_choices,
     client_options,
-    commercial_options,  # noqa: F401
-    delegation_options,  # noqa: F401
+    commercial_options,
+    delegation_options,
     delivered_mask,
-    scope_by_delegation,  # noqa: F401
+    scope_by_delegation,
     sort_by_urgency,
 )
 from vision.proof_link import resolve_proof_order_link
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def urgency_bands(model: pd.DataFrame) -> list[tuple[int, str]]:
@@ -33,11 +50,8 @@ def urgency_bands(model: pd.DataFrame) -> list[tuple[int, str]]:
     """
     if not {"Urgencia", "Color urgencia", "Estado"} <= set(model.columns):
         return []
-    delivered = (
-        model["Estado"]
-        .astype(str)
-        .str.split(" | ", regex=False)
-        .map(lambda parts: "Entregadas" in parts)
+    delivered = model["Estado"].astype(str).str.split(" | ", regex=False).map(
+        lambda parts: "Entregadas" in parts
     )
     values = pd.to_numeric(model["Urgencia"], errors="coerce")
     usable = ~delivered & values.notna() & model["Color urgencia"].map(_available)
@@ -76,6 +90,10 @@ def urgency_legend(bands: list[tuple[int, str]]) -> str:
     return "".join(items)
 
 
+
+
+
+
 def proof_stage_counts(
     history: dict | None, sales_documents: list[str]
 ) -> tuple[list[dict], int]:
@@ -108,6 +126,8 @@ def proof_stage_counts(
         for source in sources
     ]
     return rows, len(observed_documents)
+
+
 
 
 NO_DATE = "—"
@@ -144,7 +164,9 @@ def format_sap_dates(values) -> str:
     return " · ".join(parts) or NO_DATE
 
 
-def confirmed_delivery_dates(model: pd.DataFrame, details: dict | None) -> pd.Series:
+def confirmed_delivery_dates(
+    model: pd.DataFrame, details: dict | None
+) -> pd.Series:
     """Fecha de entrega confirmada de SAP por máquina (solo desde los detalles LION)."""
     shown = []
     for identifier in model.get("ID", []):
@@ -244,35 +266,18 @@ def _render_cards(
         number = f'<div class="n">Etapa {position}</div>' if numbered else ""
         cards.append(
             f'<div class="vs-card{"" if count else " zero"}" style="--c:{accent}">'
-            f'{number}<div class="t">{escape(label)}</div>'
+            f"{number}<div class=\"t\">{escape(label)}</div>"
             f'<div class="v">{count}<span class="u">{escape(unit)}</span></div>'
             f'<div class="vs-bar"><span style="width:{share:.0f}%"></span></div>'
             "</div>"
         )
-    _html(
-        f'<div class="vs-grid{" vs-stage-grid" if numbered else ""}">{"".join(cards)}</div>'
-    )
+    _html(f'<div class="vs-grid{" vs-stage-grid" if numbered else ""}">{"".join(cards)}</div>')
 
 
-def _advance(status, allowed_stages=None) -> dict:
+def _advance(status) -> dict:
     """Posición en la secuencia de etapas de LION; no es un porcentaje."""
     progress = lion_adapter.stage_progress(status)
     timeline = progress["timeline"]
-    if allowed_stages is not None:
-        allowed = frozenset(allowed_stages)
-        timeline = [item for item in timeline if item["label"] in allowed]
-        current = [item["label"] for item in timeline if item["kind"] == "current"]
-        scoped_percent = (
-            sum(item["percent"] for item in timeline) / len(timeline) if timeline else 0
-        )
-        return {
-            "position": None,
-            "total": len(timeline),
-            "text": "Avance de las etapas asignadas",
-            "timeline": timeline,
-            "states": current,
-            "scoped_percent": scoped_percent,
-        }
     total = len(timeline)
     current = [item["number"] for item in timeline if item["kind"] == "current"]
     done = [item["number"] for item in timeline if item["kind"] == "done"]
@@ -317,6 +322,10 @@ def _history_segments(records: list[dict]) -> list[dict]:
     return segments
 
 
+
+
+
+
 def render_commercial_workspace(
     model: pd.DataFrame,
     *,
@@ -335,11 +344,7 @@ def render_commercial_workspace(
             st.caption(f"Datos actualizados a: {shown_date}")
     show_delivered = bool(st.session_state.get("commercial_show_delivered_v9", False))
     _delivered = delivered_mask(model)
-    hidden_delivered = (
-        int(model.loc[_delivered, "ID"].nunique())
-        if "ID" in model
-        else int(_delivered.sum())
-    )
+    hidden_delivered = int(model.loc[_delivered, "ID"].nunique()) if "ID" in model else int(_delivered.sum())
     if not show_delivered:
         model = model.loc[~_delivered].copy()
     _label("Mis clientes")
@@ -357,16 +362,10 @@ def render_commercial_workspace(
     clients = client_options(matching, matching_details)
     if not clients:
         show_delivered = st.toggle(
-            "Ver entregadas",
-            value=False,
-            key="commercial_show_delivered_v9",
+            "Ver entregadas", value=False, key="commercial_show_delivered_v9",
             help="Incluye las máquinas con estado Entregadas. Desactivado: cartera pendiente de entrega.",
         )
-        st.info(
-            "No hay máquinas pendientes para este ámbito. Activa «Ver entregadas» para consultar las entregadas."
-            if not show_delivered
-            else "No hay clientes disponibles para el ámbito seleccionado."
-        )
+        st.info("No hay máquinas pendientes para este ámbito. Activa «Ver entregadas» para consultar las entregadas." if not show_delivered else "No hay clientes disponibles para el ámbito seleccionado.")
         return
 
     stage_summary_slot = st.container()
@@ -401,6 +400,12 @@ def render_commercial_workspace(
         if client != ALL_CLIENTS
         else matching.copy()
     )
+    client_ids = set(client_model.get("ID", []))
+    client_details = {
+        identifier: frame
+        for identifier, frame in matching_details.items()
+        if identifier in client_ids
+    }
     machine_count = (
         client_model["ID"].nunique()
         if "ID" in client_model.columns
@@ -432,26 +437,21 @@ def render_commercial_workspace(
         )
     _label("Mis máquinas")
     show_delivered = st.toggle(
-        "Ver entregadas",
-        value=False,
-        key="commercial_show_delivered_v9",
+        "Ver entregadas", value=False, key="commercial_show_delivered_v9",
         help="Incluye las máquinas con estado Entregadas. Desactivado: cartera pendiente de entrega.",
     )
     if not show_delivered and hidden_delivered:
-        st.caption(
-            f"{hidden_delivered} entregadas ocultas. Activa «Ver entregadas» para consultarlas."
-        )
+        st.caption(f"{hidden_delivered} entregadas ocultas. Activa «Ver entregadas» para consultarlas.")
     bands = urgency_bands(identity_model if identity_model is not None else model)
     client_model = client_model.copy()
     client_model["Fecha de entrega"] = [
         format_sap_dates([value])
         for value in client_model.get(
-            "Fecha de entrega (Excel)",
-            pd.Series([""] * len(client_model), index=client_model.index),
+            "Fecha de entrega (Excel)", pd.Series([""] * len(client_model), index=client_model.index)
         )
     ]
-    client_model["Fecha entrega confirmada"] = confirmed_delivery_dates(
-        client_model, details
+    client_model["Fecha entrega confirmada"] = (
+        confirmed_delivery_dates(client_model, details)
     )
     stage_choices = [stage for stage in stage_order if process_counts[stage]]
     urgency_choices = (
@@ -462,17 +462,9 @@ def render_commercial_workspace(
         if "Urgencia" in client_model.columns
         else []
     )
-    if st.session_state.get("commercial_list_stage") not in (
-        None,
-        "Todas las etapas",
-        *stage_choices,
-    ):
+    if st.session_state.get("commercial_list_stage") not in (None, "Todas las etapas", *stage_choices):
         st.session_state.pop("commercial_list_stage", None)
-    if st.session_state.get("commercial_list_urgency") not in (
-        None,
-        "Todas las urgencias",
-        *urgency_choices,
-    ):
+    if st.session_state.get("commercial_list_urgency") not in (None, "Todas las urgencias", *urgency_choices):
         st.session_state.pop("commercial_list_urgency", None)
     filters = st.columns([3, 2, 2])
     text_filter = filters[0].text_input(
@@ -532,7 +524,8 @@ def render_commercial_workspace(
     visible_columns = [
         column
         for column in candidate_columns
-        if column in client_model.columns and client_model[column].map(_available).any()
+        if column in client_model.columns
+        and client_model[column].map(_available).any()
     ]
     display_model = client_model[visible_columns].rename(
         columns={
@@ -607,8 +600,7 @@ def with_delivery_dates(model: pd.DataFrame, details: dict | None) -> pd.DataFra
     result["Fecha de entrega"] = [
         format_sap_dates([value])
         for value in result.get(
-            "Fecha de entrega (Excel)",
-            pd.Series([""] * len(result), index=result.index),
+            "Fecha de entrega (Excel)", pd.Series([""] * len(result), index=result.index)
         )
     ]
     result["Fecha entrega confirmada"] = confirmed_delivery_dates(result, details)
@@ -616,14 +608,7 @@ def with_delivery_dates(model: pd.DataFrame, details: dict | None) -> pd.DataFra
 
 
 def render_machine_sheet(
-    selected,
-    client_model,
-    model,
-    identity_model,
-    history,
-    bands,
-    *,
-    allowed_stages=None,
+    selected, client_model, model, identity_model, history, bands
 ) -> None:
     """Ficha de máquina compartida por Comercial, Manager y O2C."""
     selected_id = selected["ID"]
@@ -639,9 +624,7 @@ def render_machine_sheet(
 
     def kv(label: str, value, *, raw: bool = False) -> str:
         shown = value if raw else escape(str(value))
-        return (
-            f'<div class="vs-kv"><span>{escape(label)}</span><span>{shown}</span></div>'
-        )
+        return f'<div class="vs-kv"><span>{escape(label)}</span><span>{shown}</span></div>'
 
     def field_value(field: str) -> str:
         return (
@@ -651,20 +634,9 @@ def render_machine_sheet(
         )
 
     _label("Ficha de máquina")
-    advance = _advance(selected.get("Estado"), allowed_stages)
-    if allowed_stages is None:
-        stage_label = " · ".join(advance["states"]) or "No disponible"
-        share = (advance["position"] or 0) / advance["total"] * 100
-        progress_text = (
-            f"Avance del proceso: <b>{escape(advance['text'])}</b> · posición "
-            "en la secuencia, no un porcentaje de fabricación"
-        )
-    else:
-        stage_label = (
-            " · ".join(advance["states"]) or "No hay una etapa asignada en curso"
-        )
-        share = advance["scoped_percent"]
-        progress_text = f"Avance en tus etapas asignadas: <b>{share:.0f}%</b>"
+    advance = _advance(selected.get("Estado"))
+    stage_label = " · ".join(advance["states"]) or "No disponible"
+    share = (advance["position"] or 0) / advance["total"] * 100
     urgency = field_value("Urgencia")
     urgency_tone = urgency_color(selected.get("Urgencia"), bands)
     urgency_html = (
@@ -688,11 +660,10 @@ def render_machine_sheet(
             + "</div>"
         )
     with situation:
-        rows = kv(
-            "Etapa actual",
-            f'<span class="vs-badge">{escape(stage_label)}</span>',
-            raw=True,
-        ) + kv("Urgencia operacional", urgency_html, raw=True)
+        rows = (
+            kv("Etapa actual", f'<span class="vs-badge">{escape(stage_label)}</span>', raw=True)
+            + kv("Urgencia operacional", urgency_html, raw=True)
+        )
         for label, field in (
             ("Área responsable", "Oficina de ventas"),
             ("Fecha de entrega", "Fecha de entrega"),
@@ -712,7 +683,9 @@ def render_machine_sheet(
         _html(
             '<div class="vs-panel"><h4>Situación actual · LION</h4>'
             + rows
-            + f'<div class="vs-adv" style="margin-top:.6rem">{progress_text}</div>'
+            + f'<div class="vs-adv" style="margin-top:.6rem">Avance del proceso: '
+            f"<b>{escape(advance['text'])}</b> · posición en la secuencia, no un "
+            "porcentaje de fabricación</div>"
             f'<div class="vs-bar"><span style="width:{share:.0f}%"></span></div></div>'
         )
     with steps:
@@ -721,7 +694,7 @@ def render_machine_sheet(
             mark = {"done": "✓", "current": "●", "future": "○"}[stage["kind"]]
             items.append(
                 f'<li class="{stage["kind"]}"><span class="d">{mark}</span>'
-                f"{stage['number']}. {escape(str(stage['label']))}</li>"
+                f'{stage["number"]}. {escape(str(stage["label"]))}</li>'
             )
         _html(
             '<div class="vs-panel"><h4>Progresión del proceso</h4>'
@@ -741,9 +714,7 @@ def render_comments(selected) -> None:
     _label("Comentarios y notas", "compartidos entre perfiles")
     machine = comments.identity_of(selected)
     if machine is None:
-        st.info(
-            "Esta máquina no tiene documento de ventas: no se pueden asociar comentarios."
-        )
+        st.info("Esta máquina no tiene documento de ventas: no se pueden asociar comentarios.")
         return
     author = role_selection.current_author()
     box_key = f"comment_box::{selected['ID']}"
@@ -773,12 +744,7 @@ def render_comments(selected) -> None:
             placeholder="Escribe una nota visible para todos los perfiles",
             height=90,
         )
-        st.button(
-            "Enviar",
-            key=f"comment_send::{selected['ID']}",
-            type="primary",
-            on_click=send,
-        )
+        st.button("Enviar", key=f"comment_send::{selected['ID']}", type="primary", on_click=send)
         if st.session_state.get(error_key):
             st.warning(st.session_state[error_key])
         st.caption(
@@ -789,16 +755,14 @@ def render_comments(selected) -> None:
     if not existing:
         st.caption("Todavía no hay comentarios para esta máquina.")
     for item in existing:
-        initials = (
-            "".join(part[0] for part in item["author"].split()[:2]).upper() or "?"
-        )
+        initials = "".join(part[0] for part in item["author"].split()[:2]).upper() or "?"
         stamp = datetime.strptime(item["created_at"], "%Y-%m-%d %H:%M:%S").strftime(
             "%d/%m/%Y %H:%M"
         )
         _html(
             '<div class="vs-cm"><div class="av">'
             f'{escape(initials)}</div><div><div class="hd"><b>{escape(item["author"])}</b> '
-            f"({escape(item['role'])}) · {stamp}</div>"
+            f'({escape(item["role"])}) · {stamp}</div>'
             f'<div class="tx">{escape(item["body"])}</div></div></div>'
         )
 
@@ -847,7 +811,9 @@ def _render_proof_history(selected, model, identity_model, history) -> None:
                                 "stages": tuple(names),
                             }
                         )
-                    with_year = len({str(item["Fecha"])[:4] for item in records}) > 1
+                    with_year = (
+                        len({str(item["Fecha"])[:4] for item in records}) > 1
+                    )
                     steps_html = []
                     for segment in _history_segments(
                         [
@@ -859,7 +825,8 @@ def _render_proof_history(selected, model, identity_model, history) -> None:
                         span = (
                             first
                             if segment["count"] == 1
-                            else f"{first} → {_format_day(segment['last'], with_year)}"
+                            else f"{first} → "
+                            f"{_format_day(segment['last'], with_year)}"
                         )
                         note = (
                             ""
@@ -879,11 +846,7 @@ def _render_proof_history(selected, model, identity_model, history) -> None:
                     )
                     detail.dataframe(
                         [
-                            {
-                                key: value
-                                for key, value in item.items()
-                                if key != "stages"
-                            }
+                            {key: value for key, value in item.items() if key != "stages"}
                             for item in records
                         ],
                         hide_index=True,
