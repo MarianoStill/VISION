@@ -131,7 +131,7 @@ def _text(app):
     return "\n".join(item.value for item in app.markdown)
 
 
-def test_initial_screen_offers_only_three_access_categories():
+def test_initial_screen_asks_who_signs_in_and_hides_data_administration():
     app = AppTest.from_file(str(APP_FILE)).run(timeout=60)
 
     assert not app.exception
