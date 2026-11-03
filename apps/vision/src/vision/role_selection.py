@@ -4,9 +4,13 @@ import streamlit as st
 ROLE_KEY="vision_role";COMMERCIAL_KEY="vision_commercial";ENTERED_KEY="vision_entered";ADMIN_KEY="admin_data_mode"
 COMMERCIAL_ROLE="Comercial";MANAGER_ROLE="Manager Comercial";O2C_ROLE="O2C"
 DELEGATION_KEY="vision_delegation";O2C_STAGES_KEY="o2c_stages";O2C_PRIMARY_KEY="o2c_primary";O2C_ACTIVE_KEY="o2c_active"
-ACCESS_CATEGORY_KEY="vision_access_category";ACCESS_VALUE_KEY="vision_access_value"
-COMMERCIAL_ACCESS="Comercial";DELEGATION_ACCESS="Delegación";O2C_ACCESS="O2C"
+O2C_MANAGER_ROLE="Manager O2C Global";O2C_MANAGER_NAME="Ana Feliu"
+ACCESS_ERROR_KEY="vision_access_error"
 _PROFILE_KEYS=(ROLE_KEY,COMMERCIAL_KEY,DELEGATION_KEY,ENTERED_KEY)
+
+
+def entered_o2c_manager():
+    return bool(st.session_state.get(ENTERED_KEY) and st.session_state.get(ROLE_KEY)==O2C_MANAGER_ROLE)
 
 
 def entered_commercial():
@@ -27,12 +31,13 @@ def current_author():
     if role==COMMERCIAL_ROLE and st.session_state.get(COMMERCIAL_KEY):return st.session_state[COMMERCIAL_KEY],COMMERCIAL_ROLE
     if role==MANAGER_ROLE and st.session_state.get(DELEGATION_KEY):return "Manager Comercial · "+st.session_state[DELEGATION_KEY],MANAGER_ROLE
     if role==O2C_ROLE:return "Usuario O2C",O2C_ROLE
+    if role==O2C_MANAGER_ROLE:return O2C_MANAGER_NAME,O2C_MANAGER_ROLE
     return None
 
 
 def _clear_context():
-    exact=set(_PROFILE_KEYS)|{ADMIN_KEY,"vision_navigation",O2C_STAGES_KEY,O2C_PRIMARY_KEY,O2C_ACTIVE_KEY,"o2c_stage_options","manager_workspace_view_v20"}
-    prefixes=("manager_","mgr_report_","o2c_","commercial_","comment_box::","comment_error::","comment_send::")
+    exact=set(_PROFILE_KEYS)|{ADMIN_KEY,"vision_navigation",O2C_STAGES_KEY,O2C_PRIMARY_KEY,O2C_ACTIVE_KEY,"o2c_stage_options","manager_workspace_view_v20",ACCESS_ERROR_KEY,"_vision_manager_report_cache_v6"}
+    prefixes=("manager_","_manager_","mgr_report_","o2c_","global_o2c_","vision_access_text_","commercial_","comment_box::","comment_error::","comment_send::")
     for key in list(st.session_state):
         if key in exact or str(key).startswith(prefixes):
             st.session_state.pop(key,None)
@@ -44,16 +49,38 @@ def change_profile():
     st.session_state["vision_access_epoch"] = int(st.session_state.get("vision_access_epoch",0)) + 1
 
 
-def _enter_access(commercials,delegations,stages,category_key,value_key):
-    category=st.session_state.get(category_key)
-    value=st.session_state.get(value_key)
-    if category==COMMERCIAL_ACCESS and value in commercials:
-        kind="commercial"
-    elif category==DELEGATION_ACCESS and value in delegations:
-        kind="manager"
-    elif category==O2C_ACCESS:
-        kind="o2c"
-    else:
+def _norm(text):
+    return " ".join(str(text or "").split()).casefold()
+
+
+def resolve_option(typed,options):
+    """Devuelve el valor real de `options` que coincide con lo escrito (sin distinguir mayúsculas), o None."""
+    wanted=_norm(typed)
+    if not wanted:return None
+    matches=[o for o in options if _norm(o)==wanted]
+    exact=[o for o in matches if o==str(typed).strip()]
+    return (exact or matches or [None])[0]
+
+
+def is_o2c_manager_name(typed):
+    return " ".join(str(typed or "").split())==O2C_MANAGER_NAME
+
+
+def _enter_access(kind,text_key,commercials,delegations,stages):
+    typed=st.session_state.get(text_key) if text_key else None
+    value=None
+    if kind=="commercial":
+        value=resolve_option(typed,commercials)
+        if value is None:
+            st.session_state[ACCESS_ERROR_KEY]=(kind,"No hay comerciales disponibles." if not commercials else "No se encontró ese comercial en los datos.");return
+    elif kind=="manager":
+        value=resolve_option(typed,delegations)
+        if value is None:
+            st.session_state[ACCESS_ERROR_KEY]=(kind,"No hay delegaciones disponibles." if not delegations else "No se encontró esa delegación en los datos.");return
+    elif kind=="o2c_manager":
+        if not is_o2c_manager_name(typed):
+            st.session_state[ACCESS_ERROR_KEY]=(kind,"Nombre no reconocido para este acceso.");return
+    elif kind!="o2c":
         return
     # Al entrar se limpia el contexto sin rotar el widget que disparó este callback.
     _clear_context()
@@ -61,9 +88,9 @@ def _enter_access(commercials,delegations,stages,category_key,value_key):
         st.session_state[ROLE_KEY]=COMMERCIAL_ROLE;st.session_state[COMMERCIAL_KEY]=value;st.session_state[ENTERED_KEY]=True
     elif kind=="manager":
         st.session_state[ROLE_KEY]=MANAGER_ROLE;st.session_state[DELEGATION_KEY]=value;st.session_state[ENTERED_KEY]=True
-    elif kind=="o2c":
+    elif kind in ("o2c","o2c_manager"):
         selected=list(stages)
-        st.session_state[ROLE_KEY]=O2C_ROLE;st.session_state[O2C_STAGES_KEY]=selected
+        st.session_state[ROLE_KEY]=O2C_ROLE if kind=="o2c" else O2C_MANAGER_ROLE;st.session_state[O2C_STAGES_KEY]=selected
         st.session_state[O2C_PRIMARY_KEY]=selected[0] if selected else None
         st.session_state[O2C_ACTIVE_KEY]="Todas mis etapas";st.session_state[ENTERED_KEY]=True
 _CSS="""<style>
@@ -79,28 +106,22 @@ def render_role_screen(commercials,sources_ready,message=None,*,navigation_ready
     st.markdown(_CSS,unsafe_allow_html=True)
     st.markdown('<div class="v20-title">Bienvenido a <b>VISION</b></div><div class="v20-sub">La operación, las personas y el progreso, conectados.</div><div class="v20-question">¿Cómo quieres acceder?</div>',unsafe_allow_html=True)
     epoch=int(st.session_state.get("vision_access_epoch",0))
-    category_key=f"{ACCESS_CATEGORY_KEY}::{epoch}"
-    enter_key=f"vision_access_enter::{epoch}"
-    categories=[COMMERCIAL_ACCESS,DELEGATION_ACCESS,O2C_ACCESS]
+    error=st.session_state.get(ACCESS_ERROR_KEY)
+    # (tipo de acceso, etiqueta, opciones o None, texto de ayuda, vacío)
+    cards=(("commercial","Comercial","Escribe tu nombre de comercial",commercials,"No hay comerciales disponibles."),
+           ("manager","Delegación","Escribe el nombre de tu delegación",delegations,"No hay delegaciones disponibles."),
+           ("o2c_manager","Gestión O2C global","Escribe tu nombre",None,None))
     with st.container(key="vision_access_box"):
-        cols=st.columns([8,1.2],vertical_alignment="bottom",gap="small")
-        with cols[0]:
-            category=st.selectbox("Tipo de acceso",categories,index=None,placeholder="Selecciona un acceso...",key=category_key,label_visibility="collapsed")
-            value_key=f"{ACCESS_VALUE_KEY}::{category or 'none'}::{epoch}"
-            options=[]
-            if category==COMMERCIAL_ACCESS:
-                options=commercials
-                if options:
-                    st.selectbox("Comercial",options,index=None,placeholder="Selecciona un comercial...",key=value_key)
-                else:
-                    st.info("No hay comerciales disponibles.")
-            elif category==DELEGATION_ACCESS:
-                options=delegations
-                if options:
-                    st.selectbox("Delegación",options,index=None,placeholder="Selecciona una delegación...",key=value_key)
-                else:
-                    st.info("No hay delegaciones disponibles.")
-        with cols[1]:
-            can_enter=category==O2C_ACCESS or bool(st.session_state.get(value_key) in options)
-            st.button("→",key=enter_key,type="primary",width="stretch",disabled=not can_enter,on_click=_enter_access,args=(commercials,delegations,stages,category_key,value_key))
+        for kind,label,placeholder,options,empty in cards:
+            text_key=f"vision_access_text_{kind}::{epoch}"
+            with st.form(f"vision_access_form_{kind}::{epoch}",border=False):
+                cols=st.columns([8,1.2],vertical_alignment="bottom",gap="small")
+                with cols[0]:
+                    st.text_input(label,placeholder=placeholder,key=text_key,disabled=options is not None and not options)
+                with cols[1]:
+                    st.form_submit_button("→",type="primary",width="stretch",disabled=options is not None and not options,
+                                          on_click=_enter_access,args=(kind,text_key,commercials,delegations,stages))
+            if options is not None and not options:st.caption(empty)
+            elif error and error[0]==kind:st.error(error[1])
+        st.button("Acceso O2C",key=f"vision_access_o2c::{epoch}",width="stretch",on_click=_enter_access,args=("o2c",None,commercials,delegations,stages))
     if message:st.caption(message)

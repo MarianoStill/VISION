@@ -1,4 +1,4 @@
-﻿import time
+import time
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("streamlit")
 
 from streamlit.testing.v1 import AppTest
-from vision import lion_adapter
+from vision import lion_adapter, role_selection
 
 APP_FILE = (
     Path(__file__).resolve().parents[2]
@@ -56,20 +56,19 @@ def isolate_background_work(monkeypatch):
     st.cache_resource.clear()
 
 
-def _picker(app):
-    return next(
-        s for s in app.selectbox if str(s.key).startswith("vision_access_category::")
-    )
+_PATH_INDEX = {"commercial": 0, "manager": 1, "o2c_manager": 2}
 
 
-def _value_picker(app):
-    return next(
-        s for s in app.selectbox if str(s.key).startswith("vision_access_value::")
-    )
+def _text_input(app, kind):
+    return next(t for t in app.text_input if str(t.key).startswith(f"vision_access_text_{kind}::"))
 
 
-def _enter_button(app):
-    return next(b for b in app.button if str(b.key).startswith("vision_access_enter::"))
+def _submit(app, kind):
+    return [b for b in app.button if b.label == "→"][_PATH_INDEX[kind]]
+
+
+def _o2c_button(app):
+    return next(b for b in app.button if str(b.key).startswith("vision_access_o2c::"))
 
 
 def _settle(app, attempts=80):
@@ -92,15 +91,16 @@ def _settle(app, attempts=80):
 
 def _enter_access(app, label, settle=True):
     if label == "O2C":
-        category, value = "O2C", None
-    elif label.endswith(" Manager"):
-        category, value = "Delegación", label.removesuffix(" Manager")
+        _o2c_button(app).click().run(timeout=60)
     else:
-        category, value = "Comercial", label
-    _picker(app).set_value(category).run(timeout=60)
-    if value is not None:
-        _value_picker(app).set_value(value).run(timeout=60)
-    _enter_button(app).click().run(timeout=60)
+        if label == role_selection.O2C_MANAGER_NAME:
+            kind, value = "o2c_manager", label
+        elif label.endswith(" Manager"):
+            kind, value = "manager", label.removesuffix(" Manager")
+        else:
+            kind, value = "commercial", label
+        _text_input(app, kind).set_value(value)
+        _submit(app, kind).click().run(timeout=60)
     return _settle(app) if settle else app
 
 
@@ -137,8 +137,9 @@ def test_initial_screen_asks_who_signs_in_and_hides_data_administration():
     assert not app.exception
     assert "Bienvenido a <b>VISION</b>" in _text(app)
     assert "¿Cómo quieres acceder?" in _text(app)
-    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
-    assert _enter_button(app).disabled
+    assert [t.label for t in app.text_input] == ["Comercial", "Delegación", "Gestión O2C global"]
+    assert not app.selectbox
+    assert _o2c_button(app).label == "Acceso O2C"
     assert not app.file_uploader
     assert not app.segmented_control
     assert not app.pills
@@ -274,7 +275,7 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
     # La portada no procesa datos: LION y PROOF se preparan solo tras entrar.
     assert not app.exception
     assert lion_calls == []
-    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
+    assert [t.label for t in app.text_input] == ["Comercial", "Delegación", "Gestión O2C global"]
     app = _enter_access(app, "O2C")
     assert not app.exception
     assert len(lion_calls) == 1
@@ -284,10 +285,7 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
     assert Path(ingestion_calls[0][1]).resolve() == sap_file.parent.resolve()
     assert proof_calls == [str(proof_database.resolve())]
     app.button(key="change_profile").click().run(timeout=60)
-    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
-    _picker(app).set_value("Comercial").run(timeout=60)
-    assert _value_picker(app).options == ["Comercial A", "Comercial B"]
-    assert _enter_button(app).disabled
+    assert "¿Cómo quieres acceder?" in _text(app)
     assert not app.file_uploader
     assert not app.date_input
 
@@ -395,9 +393,7 @@ def test_manager_scopes_workspace_by_delegation_and_optional_commercial(
     # El catálogo de accesos se publica tras la primera preparación de datos.
     app = _enter_access(app, "O2C")
     app.button(key="change_profile").click().run(timeout=60)
-    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
-    _picker(app).set_value("Delegación").run(timeout=60)
-    assert _value_picker(app).options == ["Delegación X", "Delegación Y"]
+    assert "¿Cómo quieres acceder?" in _text(app)
     app = _enter_access(app, "Delegación X Manager")
     assert not app.exception
 
@@ -451,6 +447,77 @@ def test_manager_scopes_workspace_by_delegation_and_optional_commercial(
     app.button(key="change_profile").click().run(timeout=60)
     assert "¿Cómo quieres acceder?" in _text(app)
     assert len(lion_calls) == 1
+    for key in list(app.session_state):
+        assert not str(key).startswith(("_manager_", "manager_", "global_o2c_"))
+
+
+def test_ana_feliu_sees_every_delegation_and_exits_cleanly(
+    synthetic_sap_xlsx, tmp_path, monkeypatch
+):
+    root = tmp_path / "CO-VISION-data"
+    sap_file = root / "sap" / "daily" / "snapshot_2026-10-27.xlsx"
+    proof_database = root / "proof" / "proof.db"
+    sap_file.parent.mkdir(parents=True)
+    proof_database.parent.mkdir(parents=True)
+    sap_file.write_bytes(synthetic_sap_xlsx)
+    proof_database.touch()
+    monkeypatch.setenv("CO_VISION_DATA_ROOT", str(root))
+
+    rows = [
+        ("machine-a", "Delegación X"),
+        ("machine-b", "Delegación X"),
+        ("machine-c", "Delegación Y"),
+    ]
+    model = pd.DataFrame(
+        [
+            {
+                "ID": identifier,
+                "Comercial": "Comercial " + identifier[-1].upper(),
+                "Cliente": "Cuenta " + identifier[-1].upper(),
+                "Pedido": "ORDER-" + identifier[-1].upper(),
+                "Máquina": "Modelo " + identifier[-1].upper(),
+                "Estado": "Taller",
+                "Oficina de ventas": delegation,
+            }
+            for identifier, delegation in rows
+        ]
+    )
+    details = {
+        identifier: pd.DataFrame(
+            {"Sales Representive Name": ["x"], "Nombre del solicitante": ["y"]}
+        )
+        for identifier, _ in rows
+    }
+    history = {"sources": [], "dates": [], "observations": [], "events": [], "instances": []}
+    monkeypatch.setattr(
+        lion_adapter,
+        "process_workbook",
+        lambda content, reference_date: (model, details, pd.DataFrame(), None, "Base"),
+    )
+    monkeypatch.setattr(proof, "read_history", lambda path: history)
+    _fake_folder_sync(monkeypatch)
+
+    app = AppTest.from_file(str(APP_FILE)).run(timeout=60)
+    assert not app.exception
+    app = _enter_access(app, "O2C")
+    app.button(key="change_profile").click().run(timeout=60)
+
+    app = _enter_access(app, role_selection.O2C_MANAGER_NAME)
+    assert not app.exception
+    assert [tab.label for tab in app.tabs] == ["Workspace O2C", "Informe global"]
+    breakdown = next(
+        df.value for df in app.dataframe if "Máquinas" in df.value.columns
+    )
+    total = breakdown[breakdown["Delegación / área"] == "Total"].iloc[0]
+    assert total["Máquinas"] == 3
+    shown = set(breakdown["Delegación / área"])
+    assert {"Delegación X", "Delegación Y"} <= shown
+
+    app.button(key="change_profile").click().run(timeout=60)
+    assert "¿Cómo quieres acceder?" in _text(app)
+    assert "vision_entered" not in app.session_state or not app.session_state["vision_entered"]
+    for key in list(app.session_state):
+        assert not str(key).startswith(("global_o2c_", "o2c_"))
 
 
 def test_invalid_latest_xlsx_falls_back_to_newest_lion_valid_snapshot(
@@ -505,9 +572,7 @@ def test_invalid_latest_xlsx_falls_back_to_newest_lion_valid_snapshot(
     assert not app.exception
     assert processed == [b"invalid synthetic workbook", synthetic_sap_xlsx]
     app.button(key="change_profile").click().run(timeout=60)
-    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
-    _picker(app).set_value("Comercial").run(timeout=60)
-    assert _value_picker(app).options == ["Comercial sintético"]
+    assert "¿Cómo quieres acceder?" in _text(app)
     app = _enter_access(app, "Comercial sintético")
     assert not app.exception
     assert "Mis clientes" in _text(app)
