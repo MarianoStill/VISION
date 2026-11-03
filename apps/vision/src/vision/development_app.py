@@ -170,6 +170,17 @@ configured_sources = resolve_external_sources()
 sap_daily_directory = configured_sources["sap_daily_dir"]
 proof_database = configured_sources["proof_db"]
 proof.set_base_dates_cache_dir(configured_sources["root"] / "vision" / "cache")
+from vision import daily_update as _daily_update
+_refresh_token = _daily_update.read_token(configured_sources["root"])
+if _refresh_token != st.session_state.setdefault("_vision_refresh_seen", _refresh_token):
+    # Llegó una actualización diaria: se descartan las cachés en proceso y de sesión.
+    st.session_state["_vision_refresh_seen"] = _refresh_token
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    for _key in [k for k in st.session_state if str(k).startswith("_vision_")
+                 and k != "_vision_refresh_seen"]:
+        del st.session_state[_key]
+    st.rerun()
 if st.session_state.get(role_selection.ADMIN_KEY):
     from vision.data_admin import render_data_admin
     render_data_admin(configured_sources, _preload_coordinator_v8())
