@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime
+import hashlib
 from io import BytesIO
+from pathlib import Path
+import pickle
 import statistics
 
 import openpyxl
@@ -41,7 +44,45 @@ def _as_date(value, epoch):
     return None
 
 
+_MEMORY_CACHE = {}
+_MEMORY_LIMIT = 64
+_CACHE_DIR = None
+
+
+def set_base_dates_cache_dir(path):
+    """Persist per-observation date extraction so each Excel is parsed once."""
+    global _CACHE_DIR
+    _CACHE_DIR = Path(path) if path else None
+
+
 def _base_dates(raw):
+    digest = hashlib.sha256(raw).hexdigest()
+    cached = _MEMORY_CACHE.get(digest)
+    if cached is not None:
+        return cached
+    cache_file = _CACHE_DIR / f"base_dates_{digest}.pickle" if _CACHE_DIR else None
+    if cache_file is not None and cache_file.exists():
+        try:
+            cached = pickle.loads(cache_file.read_bytes())
+        except (OSError, pickle.UnpicklingError, EOFError):
+            cached = None
+    if cached is None:
+        cached = _parse_base_dates(raw)
+        if cache_file is not None:
+            try:
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                temporary = cache_file.with_suffix(".tmp")
+                temporary.write_bytes(pickle.dumps(dict(cached), protocol=5))
+                temporary.replace(cache_file)
+            except OSError:
+                pass
+    if len(_MEMORY_CACHE) >= _MEMORY_LIMIT:
+        _MEMORY_CACHE.pop(next(iter(_MEMORY_CACHE)))
+    _MEMORY_CACHE[digest] = cached
+    return cached
+
+
+def _parse_base_dates(raw):
     workbook = openpyxl.load_workbook(
         BytesIO(raw), data_only=True, read_only=True
     )

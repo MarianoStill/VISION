@@ -169,6 +169,7 @@ def _wait_for_warmup_v22(data_root):
 configured_sources = resolve_external_sources()
 sap_daily_directory = configured_sources["sap_daily_dir"]
 proof_database = configured_sources["proof_db"]
+proof.set_base_dates_cache_dir(configured_sources["root"] / "vision" / "cache")
 if st.session_state.get(role_selection.ADMIN_KEY):
     from vision.data_admin import render_data_admin
     render_data_admin(configured_sources, _preload_coordinator_v8())

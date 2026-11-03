@@ -13,6 +13,12 @@ from .service import (
     read_search_index,
 )
 
+def set_base_dates_cache_dir(path):
+    from .completion import set_base_dates_cache_dir as configure
+
+    configure(path)
+
+
 def availability() -> str:
     return BASE_TECHNICAL_STATUS
 
@@ -79,4 +85,5 @@ __all__ = [
     "read_history",
     "read_search_index",
     "register_snapshot",
+    "set_base_dates_cache_dir",
 ]
