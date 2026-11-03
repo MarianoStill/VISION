@@ -401,6 +401,7 @@ if selected_delegation is not None and selected_delegation not in delegations:
     role_selection.change_profile()
     selected_delegation = None
 selected_o2c = role_selection.entered_o2c()
+selected_o2c_manager = role_selection.entered_o2c_manager()
 o2c_labels = o2c_workspace.stage_labels()
 if source_model is not None:
     if _catalog_signature is None:
@@ -416,6 +417,7 @@ if (
     selected_commercial is None
     and selected_delegation is None
     and not selected_o2c
+    and not selected_o2c_manager
 ):
     if source_model is None:
         notice = (
@@ -434,14 +436,38 @@ if (
     )
     st.stop()
 
-if selected_o2c:
+if selected_o2c or selected_o2c_manager:
     design_system.render_shell(
-        context=("Perfil", "O2C"),
+        context=("Perfil", "O2C" if selected_o2c else role_selection.O2C_MANAGER_NAME),
         on_change_profile=role_selection.change_profile,
         workspace="Operational Workspace",
     )
     if source_model is None:
         st.info("No hay un snapshot SAP válido. Revisa Administración / Datos.")
+        st.stop()
+    if selected_o2c_manager:
+        from vision.o2c_global import render_global_report
+        _o2c_tab, _global_tab = st.tabs(["Workspace O2C", "Informe global"])
+        with _o2c_tab:
+            _timed_view_v8("Workspace O2C", o2c_workspace.render_o2c_workspace,
+                source_model,
+                details=source_details,
+                history=automatic_history,
+                observation_date=selected_snapshot.observation_date,
+            )
+        with _global_tab:
+            render_global_report(source_model)
+            _timed_view_v8(
+                "Informes Manager", render_manager_reports,
+                automatic_history, scope_documents(source_model),
+                history_token=(
+                    _database_signature(history_database)
+                    if history_database is not None else None
+                ),
+                load_completion=lambda documents: _cached_completion_metrics(
+                    *_database_signature(history_database), documents
+                ),
+            )
         st.stop()
     _timed_view_v8("Workspace O2C", o2c_workspace.render_o2c_workspace,
         source_model,

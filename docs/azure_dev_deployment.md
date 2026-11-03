@@ -62,7 +62,8 @@ with the web app's managed identity, never GitHub secrets or the repository.
 
 ## Access selection and access control (decision for IT)
 
-- The in-app Commercial/Delegation/O2C selector is workspace navigation, not authentication or
+- The in-app access screen (Commercial name, Delegation name, O2C direct, and the "Gestión O2C global"
+  profile for Ana Feliu, all text-entry/direct buttons) is workspace navigation, not authentication or
   authorization. Anyone who reaches the URL can choose a workspace. Therefore: synthetic data only,
   and the network gate (allowed IPs/VPN) remains the external access boundary.
 - Recommended path once IT authorizes it: App Service Authentication (Entra) with "require
