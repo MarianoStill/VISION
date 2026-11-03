@@ -36,3 +36,12 @@ Vigila `sap/daily` cada 30 s. Cuando aparece o cambia un `.xlsx` (se ignoran los
 
 La app de Azure se actualiza desde `main`; el cÃ³digo de esta funciÃ³n llega con el merge de su PR. La configuraciÃ³n de Azure (almacenamiento, tarea programada, variables) no forma parte del repositorio y debe hacerse en el entorno.
 
+
+## Carpeta de Excel independiente
+
+Si los Excel viven fuera de `CO_VISION_DATA_ROOT`, definir `CO_VISION_SAP_DAILY_DIR` con la ruta de esa carpeta (absoluta, o relativa a la raíz). PROOF, la caché y la señal siguen dentro de `CO_VISION_DATA_ROOT`. Ejemplo local:
+
+```
+$env:CO_VISION_DATA_ROOT = "$env:USERPROFILE\CO-VISION-data"
+$env:CO_VISION_SAP_DAILY_DIR = "C:\Users\a0119524\OneDrive - KION Group\AGENT\Tracker"
+```
