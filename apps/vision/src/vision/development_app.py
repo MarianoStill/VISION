@@ -29,6 +29,7 @@ from vision.data_sources import (
     resolve_external_sources,
 )
 from vision.manager_reports import render_manager_reports, scope_documents
+from vision.o2c_reports import render_o2c_reports
 from vision.navigation_cache import (
     catalog_signature,
     read_catalog,
@@ -168,6 +169,18 @@ def _wait_for_warmup_v22(data_root):
 configured_sources = resolve_external_sources()
 sap_daily_directory = configured_sources["sap_daily_dir"]
 proof_database = configured_sources["proof_db"]
+proof.set_base_dates_cache_dir(configured_sources["root"] / "vision" / "cache")
+from vision import daily_update as _daily_update
+_refresh_token = _daily_update.read_token(configured_sources["root"])
+if _refresh_token != st.session_state.setdefault("_vision_refresh_seen", _refresh_token):
+    # Llegó una actualización diaria: se descartan las cachés en proceso y de sesión.
+    st.session_state["_vision_refresh_seen"] = _refresh_token
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    for _key in [k for k in st.session_state if str(k).startswith("_vision_")
+                 and k != "_vision_refresh_seen"]:
+        del st.session_state[_key]
+    st.rerun()
 if st.session_state.get(role_selection.ADMIN_KEY):
     from vision.data_admin import render_data_admin
     render_data_admin(configured_sources, _preload_coordinator_v8())
@@ -443,12 +456,25 @@ if selected_o2c:
     if source_model is None:
         st.info("No hay un snapshot SAP válido. Revisa Administración / Datos.")
         st.stop()
-    _timed_view_v8("Workspace O2C", o2c_workspace.render_o2c_workspace,
-        source_model,
-        details=source_details,
-        history=automatic_history,
-        observation_date=selected_snapshot.observation_date,
-    )
+    _o2c_machines_tab, _o2c_reports_tab = st.tabs(["Máquinas", "Informes"])
+    with _o2c_machines_tab:
+        _timed_view_v8("Workspace O2C", o2c_workspace.render_o2c_workspace,
+            source_model,
+            details=source_details,
+            history=automatic_history,
+            observation_date=selected_snapshot.observation_date,
+        )
+    with _o2c_reports_tab:
+        _timed_view_v8("Informes O2C", render_o2c_reports,
+            source_model, automatic_history,
+            history_token=(
+                _database_signature(history_database)
+                if history_database is not None else None
+            ),
+            load_completion=lambda documents: _cached_completion_metrics(
+                *_database_signature(history_database), documents
+            ),
+        )
     st.stop()
 
 if selected_commercial is not None or selected_delegation is not None:

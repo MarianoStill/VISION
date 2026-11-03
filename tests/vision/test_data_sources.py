@@ -49,3 +49,13 @@ def test_relative_data_root_resolves_from_working_directory(monkeypatch, tmp_pat
     )
 
     assert sources["root"] == tmp_path / "external-data"
+
+
+def test_sap_daily_directory_can_be_configured_independently(tmp_path):
+    folder = tmp_path / "Tracker"
+    sources = resolve_external_sources(
+        {"CO_VISION_DATA_ROOT": str(tmp_path / "root"), "CO_VISION_SAP_DAILY_DIR": str(folder)},
+        home=tmp_path,
+    )
+    assert sources["sap_daily_dir"] == folder.resolve()
+    assert sources["proof_db"] == (tmp_path / "root" / "proof" / "proof.db").resolve()

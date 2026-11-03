@@ -37,9 +37,15 @@ def resolve_external_sources(
     if not proof_default.exists() and sqlite_default.exists():
         proof_default = sqlite_default
 
+    sap_daily = environment.get("CO_VISION_SAP_DAILY_DIR")
+
     return {
         "root": root,
-        "sap_daily_dir": root / DEFAULT_SAP_DAILY_RELATIVE_PATH,
+        "sap_daily_dir": (
+            _configured_path(sap_daily, base=root)
+            if sap_daily
+            else root / DEFAULT_SAP_DAILY_RELATIVE_PATH
+        ),
         "proof_db": (
             _configured_path(proof_db, base=root)
             if proof_db
