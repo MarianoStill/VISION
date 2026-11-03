@@ -30,25 +30,12 @@ jobs:
         run: |
           .venv/bin/ruff check --select E4,E7,E9,F --extend-ignore E402,E701,E702 \
             apps/vision/src/vision/development_app.py \
-            apps/vision/src/vision/commercial_workspace.py \
-            apps/vision/src/vision/auth.py \
-            apps/vision/src/vision/authorization.py \
-            apps/vision/src/vision/asgi_app.py \
-            apps/vision/src/vision/role_selection.py \
-            apps/vision/src/vision/o2c_workspace.py \
             apps/vision/src/vision/data_admin.py \
-            scripts/hash_auth_password.py \
             scripts/regression_compare.py \
             scripts/check.py \
-            tests/auth/test_temporary_auth.py \
-            tests/auth/test_authorization.py \
-            tests/auth/asgi_client.py \
-            tests/integration/test_asgi_auth.py \
             tests/integration/test_check_script.py \
             tests/integration/test_regression_compare.py \
             tests/vision/test_development_app.py \
-            tests/vision/test_commercial_workspace.py \
-            tests/vision/test_role_selection.py \
             tests/vision/test_folder_sync.py \
             tests/e2e/seed.py \
             tests/e2e/conftest.py \

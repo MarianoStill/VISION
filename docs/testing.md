@@ -28,7 +28,7 @@ Verify that imports resolve to this checkout:
 | Command | Scope |
 | --- | --- |
 | `python scripts/check.py` | Canonical check (pytest + module entry points) |
-| `python -m pytest` | Authentication, unit, integration, regression (default `testpaths`) |
+| `python -m pytest` | Unit, integration, regression (default `testpaths`) |
 | `python -m pytest tests/e2e` | Playwright UI tests: O2C, Commercial, Manager, Administrator |
 | `python scripts/regression_compare.py baseline.xml candidate.xml` | Differential comparison of two JUnit reports |
 

@@ -49,10 +49,7 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   location: location
   tags: tags
   kind: 'linux'
-  sku: {
-    name: skuName
-    capacity: 1
-  }
+  sku: { name: skuName }
   properties: { reserved: true }
 }
 
@@ -90,8 +87,6 @@ resource app 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
         { name: 'WEBSITES_PORT', value: '8000' }
         { name: 'CO_VISION_DATA_ROOT', value: '/tmp/co-vision-dev-data' }
-        { name: 'VISION_AUTH_MODE', value: 'temporary' }
-        { name: 'VISION_AUTH_PUBLIC_ORIGIN', value: 'https://${webAppName}.azurewebsites.net' }
       ]
     }
   }
