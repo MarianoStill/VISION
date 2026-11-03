@@ -60,11 +60,11 @@ non-secret repository/environment **variables**: `AZURE_DEV_DEPLOY_ENABLED`, `AZ
 optionally `AZURE_DEV_SMOKE_URL`. If a secret ever becomes unavoidable, use Key Vault references
 with the web app's managed identity, never GitHub secrets or the repository.
 
-## Authentication and access control (decision for IT)
+## Access selection and access control (decision for IT)
 
-- The in-app role picker (Commercial/Manager/O2C/Administrator) is **navigation, not authorization**.
-  Anyone who reaches the URL can choose Administrator. Therefore: synthetic data only, and the
-  network gate (allowed IPs/VPN) is mandatory until real authentication exists.
+- The in-app Commercial/Delegation/O2C selector is workspace navigation, not authentication or
+  authorization. Anyone who reaches the URL can choose a workspace. Therefore: synthetic data only,
+  and the network gate (allowed IPs/VPN) remains the external access boundary.
 - Recommended path once IT authorizes it: App Service Authentication (Entra) with "require
   authentication", user/group assignment on the enterprise application, then server-side mapping of
   groups to roles in a reviewed code change. Neither SSO nor Entra is implemented or configured here.
@@ -156,9 +156,9 @@ resource group to stop all charges. Set an Azure Budget alert (for example EUR 5
 
 ## Risks and limitations
 
-- No real authentication or server-side authorization yet; the IP/VPN gate is the only barrier. The
-  Administrator screen can be selected by any reachable user (synthetic data only, destructive actions
-  affect only disposable `/tmp` data).
+- No authentication or server-side authorization; the IP/VPN gate is the only external access
+  boundary. Workspace selection does not restrict access to data or functionality (synthetic data
+  only, destructive actions affect only disposable `/tmp` data).
 - Deployment requires IT to provide and maintain the dedicated self-hosted runner in the approved
   network. If it is offline or its egress CIDR changes, deployment/smoke tests will fail closed.
 - Not validated against a real Azure subscription: the Bicep file is syntax-checked in CI only, the

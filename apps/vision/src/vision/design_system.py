@@ -154,9 +154,9 @@ def render_shell(
                               on_click=choose_page, args=("Informes",), width="stretch")
         with columns[2]:
             if on_change_profile is not None:
-                st.button("Cerrar sesión", key="change_profile",
+                st.button("Cambiar acceso", key="change_profile",
                           on_click=on_change_profile, width="stretch",
-                          help="Finaliza el contexto de trabajo y vuelve a la selección de perfil. No existe autenticación de usuario en esta versión.")
+                          help="Finaliza el contexto de trabajo y vuelve a la selección de acceso.")
         with columns[3]:
             if context:
                 st.markdown(
@@ -169,4 +169,3 @@ def render_shell(
                         logo_html("still_logo.png", "STILL", 40) + '</div>',
                         unsafe_allow_html=True)
     return page, ""
-

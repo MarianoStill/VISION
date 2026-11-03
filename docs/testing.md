@@ -29,7 +29,7 @@ Verify that imports resolve to this checkout:
 | --- | --- |
 | `python scripts/check.py` | Canonical check (pytest + module entry points) |
 | `python -m pytest` | Unit, integration, regression (default `testpaths`) |
-| `python -m pytest tests/e2e` | Playwright UI tests: O2C, Commercial, Manager, Administrator |
+| `python -m pytest tests/e2e` | Playwright UI tests: Commercial, Delegation, O2C, and data administration |
 | `python scripts/regression_compare.py baseline.xml candidate.xml` | Differential comparison of two JUnit reports |
 
 The UI tests start Streamlit on `127.0.0.1` with a synthetic data root (`tests/e2e/seed.py`). They never read real SAP data, need no Microsoft SSO, and the data lives in a temporary directory.

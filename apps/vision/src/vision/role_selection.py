@@ -1,10 +1,11 @@
 from __future__ import annotations
 import streamlit as st
-from vision import design_system
 
 ROLE_KEY="vision_role";COMMERCIAL_KEY="vision_commercial";ENTERED_KEY="vision_entered";ADMIN_KEY="admin_data_mode"
 COMMERCIAL_ROLE="Comercial";MANAGER_ROLE="Manager Comercial";O2C_ROLE="O2C"
 DELEGATION_KEY="vision_delegation";O2C_STAGES_KEY="o2c_stages";O2C_PRIMARY_KEY="o2c_primary";O2C_ACTIVE_KEY="o2c_active"
+ACCESS_CATEGORY_KEY="vision_access_category";ACCESS_VALUE_KEY="vision_access_value"
+COMMERCIAL_ACCESS="Comercial";DELEGATION_ACCESS="Delegación";O2C_ACCESS="O2C"
 _PROFILE_KEYS=(ROLE_KEY,COMMERCIAL_KEY,DELEGATION_KEY,ENTERED_KEY)
 
 
@@ -43,11 +44,17 @@ def change_profile():
     st.session_state["vision_access_epoch"] = int(st.session_state.get("vision_access_epoch",0)) + 1
 
 
-def _enter_access(entries,stages,access_key):
-    label=st.session_state.get(access_key)
-    entry=entries.get(label)
-    if not entry:return
-    kind,value=entry
+def _enter_access(commercials,delegations,stages,category_key,value_key):
+    category=st.session_state.get(category_key)
+    value=st.session_state.get(value_key)
+    if category==COMMERCIAL_ACCESS and value in commercials:
+        kind="commercial"
+    elif category==DELEGATION_ACCESS and value in delegations:
+        kind="manager"
+    elif category==O2C_ACCESS:
+        kind="o2c"
+    else:
+        return
     # Al entrar se limpia el contexto sin rotar el widget que disparó este callback.
     _clear_context()
     if kind=="commercial":
@@ -59,10 +66,6 @@ def _enter_access(entries,stages,access_key):
         st.session_state[ROLE_KEY]=O2C_ROLE;st.session_state[O2C_STAGES_KEY]=selected
         st.session_state[O2C_PRIMARY_KEY]=selected[0] if selected else None
         st.session_state[O2C_ACTIVE_KEY]="Todas mis etapas";st.session_state[ENTERED_KEY]=True
-    elif kind=="admin":
-        st.session_state[ADMIN_KEY]=True;st.session_state[ENTERED_KEY]=False
-
-
 _CSS="""<style>
 body:has(.st-key-vision_access_box) .block-container{max-width:1100px;padding-top:8vh}
 body:has(.st-key-vision_access_box) header[data-testid="stHeader"]{background:transparent}
@@ -71,21 +74,33 @@ body:has(.st-key-vision_access_box) header[data-testid="stHeader"]{background:tr
 
 
 def render_role_screen(commercials,sources_ready,message=None,*,navigation_ready=False,delegations=None,stages=None):
-    delegations=list(delegations or []);stages=list(stages or [])
+    commercials=sorted(set(commercials or []),key=str.casefold)
+    delegations=sorted(set(delegations or []),key=str.casefold);stages=list(stages or [])
     st.markdown(_CSS,unsafe_allow_html=True)
-    st.markdown('<div class="v20-title">Bienvenido a <b>VISION</b></div><div class="v20-sub">La operación, las personas y el progreso, conectados.</div><div class="v20-question">¿Quién va a iniciar sesión?</div>',unsafe_allow_html=True)
-    entries={}
-    for name in sorted(set(commercials),key=str.casefold):entries[name]=("commercial",name)
-    for delegation in sorted(set(delegations),key=str.casefold):entries[f"{delegation} Manager"]=("manager",delegation)
-    entries["O2C"]=("o2c",None);entries["Administrator"]=("admin",None)
-    options=list(entries)
+    st.markdown('<div class="v20-title">Bienvenido a <b>VISION</b></div><div class="v20-sub">La operación, las personas y el progreso, conectados.</div><div class="v20-question">¿Cómo quieres acceder?</div>',unsafe_allow_html=True)
     epoch=int(st.session_state.get("vision_access_epoch",0))
-    access_key=f"vision_access_picker::{epoch}"
+    category_key=f"{ACCESS_CATEGORY_KEY}::{epoch}"
     enter_key=f"vision_access_enter::{epoch}"
+    categories=[COMMERCIAL_ACCESS,DELEGATION_ACCESS,O2C_ACCESS]
     with st.container(key="vision_access_box"):
         cols=st.columns([8,1.2],vertical_alignment="bottom",gap="small")
         with cols[0]:
-            st.selectbox("Acceso",options,index=None,placeholder="Escribe tu nombre o acceso...",key=access_key,label_visibility="collapsed")
+            category=st.selectbox("Tipo de acceso",categories,index=None,placeholder="Selecciona un acceso...",key=category_key,label_visibility="collapsed")
+            value_key=f"{ACCESS_VALUE_KEY}::{category or 'none'}::{epoch}"
+            options=[]
+            if category==COMMERCIAL_ACCESS:
+                options=commercials
+                if options:
+                    st.selectbox("Comercial",options,index=None,placeholder="Selecciona un comercial...",key=value_key)
+                else:
+                    st.info("No hay comerciales disponibles.")
+            elif category==DELEGATION_ACCESS:
+                options=delegations
+                if options:
+                    st.selectbox("Delegación",options,index=None,placeholder="Selecciona una delegación...",key=value_key)
+                else:
+                    st.info("No hay delegaciones disponibles.")
         with cols[1]:
-            st.button("→",key=enter_key,type="primary",width="stretch",disabled=not st.session_state.get(access_key),on_click=_enter_access,args=(entries,stages,access_key))
+            can_enter=category==O2C_ACCESS or bool(st.session_state.get(value_key) in options)
+            st.button("→",key=enter_key,type="primary",width="stretch",disabled=not can_enter,on_click=_enter_access,args=(commercials,delegations,stages,category_key,value_key))
     if message:st.caption(message)
