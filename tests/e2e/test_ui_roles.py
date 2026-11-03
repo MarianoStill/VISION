@@ -9,30 +9,29 @@ pytestmark = pytest.mark.e2e
 TIMEOUT = 60_000
 
 
-LABELS = {"Comercial": "Comercial", "Delegación": "Delegación", "Ana": "Gestión O2C global"}
+QUESTION = "¿Quién debe acceder a VISION?"
 
 
 def _enter(page: Page, url: str, category: str, value: str | None = None):
     page.goto(url)
-    expect(page.get_by_text("¿Cómo quieres acceder?")).to_be_visible(timeout=TIMEOUT)
+    expect(page.get_by_text(QUESTION).first).to_be_visible(timeout=TIMEOUT)
     if category == "O2C":
         page.get_by_role("button", name="Acceso O2C").click()
         return
-    field = page.get_by_label(LABELS[category], exact=True)
+    field = page.get_by_placeholder("Escribe un nombre", exact=False)
     field.fill(value)
     field.press("Enter")
 
 def _change_access(page: Page):
     page.get_by_role("button", name=re.compile("Cambiar acceso")).click()
-    expect(page.get_by_text("¿Cómo quieres acceder?")).to_be_visible(timeout=TIMEOUT)
+    expect(page.get_by_text(QUESTION).first).to_be_visible(timeout=TIMEOUT)
 
 
 def test_landing_offers_only_safe_options_before_first_load(page: Page, app_url):
     page.goto(app_url)
-    expect(page.get_by_text("¿Cómo quieres acceder?")).to_be_visible(timeout=TIMEOUT)
+    expect(page.get_by_text(QUESTION).first).to_be_visible(timeout=TIMEOUT)
     assert page.get_by_role("combobox").count() == 0
-    for label in LABELS.values():
-        expect(page.get_by_label(label, exact=True)).to_be_visible(timeout=TIMEOUT)
+    expect(page.get_by_placeholder("Escribe un nombre", exact=False)).to_have_count(1)
     expect(page.get_by_role("button", name="Acceso O2C")).to_be_visible(timeout=TIMEOUT)
 
 

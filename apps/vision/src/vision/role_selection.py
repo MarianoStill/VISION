@@ -66,20 +66,25 @@ def is_o2c_manager_name(typed):
     return " ".join(str(typed or "").split())==O2C_MANAGER_NAME
 
 
+def _resolve_access(typed,commercials,delegations):
+    """Clasifica lo escrito: devuelve (tipo, valor) o (None, mensaje de error)."""
+    if is_o2c_manager_name(typed):return "o2c_manager",O2C_MANAGER_NAME
+    if _norm(typed)=="o2c":return "o2c",None
+    commercial=resolve_option(typed,commercials);delegation=resolve_option(typed,delegations)
+    if commercial and delegation:
+        return None,"El nombre coincide con un comercial y una delegación; escribe el nombre completo exacto."
+    if commercial:return "commercial",commercial
+    if delegation:return "manager",delegation
+    if not _norm(typed):return None,"Escribe un nombre para acceder."
+    return None,"No se encontró ese nombre en los datos disponibles."
+
+
 def _enter_access(kind,text_key,commercials,delegations,stages):
-    typed=st.session_state.get(text_key) if text_key else None
     value=None
-    if kind=="commercial":
-        value=resolve_option(typed,commercials)
-        if value is None:
-            st.session_state[ACCESS_ERROR_KEY]=(kind,"No hay comerciales disponibles." if not commercials else "No se encontró ese comercial en los datos.");return
-    elif kind=="manager":
-        value=resolve_option(typed,delegations)
-        if value is None:
-            st.session_state[ACCESS_ERROR_KEY]=(kind,"No hay delegaciones disponibles." if not delegations else "No se encontró esa delegación en los datos.");return
-    elif kind=="o2c_manager":
-        if not is_o2c_manager_name(typed):
-            st.session_state[ACCESS_ERROR_KEY]=(kind,"Nombre no reconocido para este acceso.");return
+    if kind=="search":
+        kind,value=_resolve_access(st.session_state.get(text_key),commercials,delegations)
+        if kind is None:
+            st.session_state[ACCESS_ERROR_KEY]=value;return
     elif kind!="o2c":
         return
     # Al entrar se limpia el contexto sin rotar el widget que disparó este callback.
@@ -104,24 +109,19 @@ def render_role_screen(commercials,sources_ready,message=None,*,navigation_ready
     commercials=sorted(set(commercials or []),key=str.casefold)
     delegations=sorted(set(delegations or []),key=str.casefold);stages=list(stages or [])
     st.markdown(_CSS,unsafe_allow_html=True)
-    st.markdown('<div class="v20-title">Bienvenido a <b>VISION</b></div><div class="v20-sub">La operación, las personas y el progreso, conectados.</div><div class="v20-question">¿Cómo quieres acceder?</div>',unsafe_allow_html=True)
+    st.markdown('<div class="v20-title">Bienvenido a <b>VISION</b></div><div class="v20-sub">La operación, las personas y el progreso, conectados.</div><div class="v20-question">¿Quién debe acceder a VISION?</div>',unsafe_allow_html=True)
     epoch=int(st.session_state.get("vision_access_epoch",0))
     error=st.session_state.get(ACCESS_ERROR_KEY)
-    # (tipo de acceso, etiqueta, opciones o None, texto de ayuda, vacío)
-    cards=(("commercial","Comercial","Escribe tu nombre de comercial",commercials,"No hay comerciales disponibles."),
-           ("manager","Delegación","Escribe el nombre de tu delegación",delegations,"No hay delegaciones disponibles."),
-           ("o2c_manager","Gestión O2C global","Escribe tu nombre",None,None))
+    text_key=f"vision_access_text::{epoch}"
     with st.container(key="vision_access_box"):
-        for kind,label,placeholder,options,empty in cards:
-            text_key=f"vision_access_text_{kind}::{epoch}"
-            with st.form(f"vision_access_form_{kind}::{epoch}",border=False):
-                cols=st.columns([8,1.2],vertical_alignment="bottom",gap="small")
-                with cols[0]:
-                    st.text_input(label,placeholder=placeholder,key=text_key,disabled=options is not None and not options)
-                with cols[1]:
-                    st.form_submit_button("→",type="primary",width="stretch",disabled=options is not None and not options,
-                                          on_click=_enter_access,args=(kind,text_key,commercials,delegations,stages))
-            if options is not None and not options:st.caption(empty)
-            elif error and error[0]==kind:st.error(error[1])
+        with st.form(f"vision_access_form::{epoch}",border=False):
+            cols=st.columns([8,1.2],vertical_alignment="bottom",gap="small")
+            with cols[0]:
+                st.text_input("¿Quién debe acceder a VISION?",placeholder="Escribe un nombre: comercial, delegación, O2C...",key=text_key,label_visibility="collapsed")
+            with cols[1]:
+                st.form_submit_button("→",type="primary",width="stretch",on_click=_enter_access,args=("search",text_key,commercials,delegations,stages))
+        if error:st.error(error)
+        if not commercials:st.caption("No hay comerciales disponibles.")
+        if not delegations:st.caption("No hay delegaciones disponibles.")
         st.button("Acceso O2C",key=f"vision_access_o2c::{epoch}",width="stretch",on_click=_enter_access,args=("o2c",None,commercials,delegations,stages))
     if message:st.caption(message)

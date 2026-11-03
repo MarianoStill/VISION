@@ -56,15 +56,12 @@ def isolate_background_work(monkeypatch):
     st.cache_resource.clear()
 
 
-_PATH_INDEX = {"commercial": 0, "manager": 1, "o2c_manager": 2}
-
-
 def _text_input(app, kind):
-    return next(t for t in app.text_input if str(t.key).startswith(f"vision_access_text_{kind}::"))
+    return next(t for t in app.text_input if str(t.key).startswith("vision_access_text::"))
 
 
 def _submit(app, kind):
-    return [b for b in app.button if b.label == "→"][_PATH_INDEX[kind]]
+    return next(b for b in app.button if b.label == "→")
 
 
 def _o2c_button(app):
@@ -136,8 +133,8 @@ def test_initial_screen_asks_who_signs_in_and_hides_data_administration():
 
     assert not app.exception
     assert "Bienvenido a <b>VISION</b>" in _text(app)
-    assert "¿Cómo quieres acceder?" in _text(app)
-    assert [t.label for t in app.text_input] == ["Comercial", "Delegación", "Gestión O2C global"]
+    assert "¿Quién debe acceder a VISION?" in _text(app)
+    assert [t.label for t in app.text_input] == ["¿Quién debe acceder a VISION?"]
     assert not app.selectbox
     assert _o2c_button(app).label == "Acceso O2C"
     assert not app.file_uploader
@@ -275,7 +272,7 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
     # La portada no procesa datos: LION y PROOF se preparan solo tras entrar.
     assert not app.exception
     assert lion_calls == []
-    assert [t.label for t in app.text_input] == ["Comercial", "Delegación", "Gestión O2C global"]
+    assert [t.label for t in app.text_input] == ["¿Quién debe acceder a VISION?"]
     app = _enter_access(app, "O2C")
     assert not app.exception
     assert len(lion_calls) == 1
@@ -285,7 +282,7 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
     assert Path(ingestion_calls[0][1]).resolve() == sap_file.parent.resolve()
     assert proof_calls == [str(proof_database.resolve())]
     app.button(key="change_profile").click().run(timeout=60)
-    assert "¿Cómo quieres acceder?" in _text(app)
+    assert "¿Quién debe acceder a VISION?" in _text(app)
     assert not app.file_uploader
     assert not app.date_input
 
@@ -306,7 +303,7 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
 
     app.button(key="change_profile").click().run(timeout=60)
     assert not app.exception
-    assert "¿Cómo quieres acceder?" in _text(app)
+    assert "¿Quién debe acceder a VISION?" in _text(app)
     assert len(lion_calls) == 1
     app = _enter_as(app, "Comercial B")
     assert app.selectbox(key="commercial_client").options[0] == "Todos los clientes"
@@ -393,7 +390,7 @@ def test_manager_scopes_workspace_by_delegation_and_optional_commercial(
     # El catálogo de accesos se publica tras la primera preparación de datos.
     app = _enter_access(app, "O2C")
     app.button(key="change_profile").click().run(timeout=60)
-    assert "¿Cómo quieres acceder?" in _text(app)
+    assert "¿Quién debe acceder a VISION?" in _text(app)
     app = _enter_access(app, "Delegación X Manager")
     assert not app.exception
 
@@ -445,7 +442,7 @@ def test_manager_scopes_workspace_by_delegation_and_optional_commercial(
     ).run(timeout=60)
 
     app.button(key="change_profile").click().run(timeout=60)
-    assert "¿Cómo quieres acceder?" in _text(app)
+    assert "¿Quién debe acceder a VISION?" in _text(app)
     assert len(lion_calls) == 1
     for key in list(app.session_state):
         assert not str(key).startswith(("_manager_", "manager_", "global_o2c_"))
@@ -514,7 +511,7 @@ def test_ana_feliu_sees_every_delegation_and_exits_cleanly(
     assert {"Delegación X", "Delegación Y"} <= shown
 
     app.button(key="change_profile").click().run(timeout=60)
-    assert "¿Cómo quieres acceder?" in _text(app)
+    assert "¿Quién debe acceder a VISION?" in _text(app)
     assert "vision_entered" not in app.session_state or not app.session_state["vision_entered"]
     for key in list(app.session_state):
         assert not str(key).startswith(("global_o2c_", "o2c_"))
@@ -572,7 +569,7 @@ def test_invalid_latest_xlsx_falls_back_to_newest_lion_valid_snapshot(
     assert not app.exception
     assert processed == [b"invalid synthetic workbook", synthetic_sap_xlsx]
     app.button(key="change_profile").click().run(timeout=60)
-    assert "¿Cómo quieres acceder?" in _text(app)
+    assert "¿Quién debe acceder a VISION?" in _text(app)
     app = _enter_access(app, "Comercial sintético")
     assert not app.exception
     assert "Mis clientes" in _text(app)

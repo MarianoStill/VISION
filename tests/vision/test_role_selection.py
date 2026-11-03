@@ -18,9 +18,6 @@ else:
     )
 """
 
-PATH_INDEX = {"commercial": 0, "manager": 1, "o2c_manager": 2}
-
-
 def _app(commercials=(), delegations=(), stages=()):
     app = AppTest.from_string(SCRIPT)
     app.session_state["_args"] = {
@@ -32,11 +29,11 @@ def _app(commercials=(), delegations=(), stages=()):
 
 
 def _text(app, kind):
-    return next(t for t in app.text_input if f"vision_access_text_{kind}::" in str(t.key))
+    return next(t for t in app.text_input if "vision_access_text::" in str(t.key))
 
 
 def _submit(app, kind):
-    return [b for b in app.button if b.label == "→"][PATH_INDEX[kind]]
+    return next(b for b in app.button if b.label == "→")
 
 
 def _enter(app, kind, typed):
@@ -50,11 +47,11 @@ def _o2c(app):
     return app
 
 
-def test_access_screen_has_four_paths_and_no_selectors():
+def test_access_screen_has_single_search_and_o2c_button():
     app = _app(["Ana"], ["Norte"], ["E1"])
     assert not app.selectbox
-    assert [t.label for t in app.text_input] == ["Comercial", "Delegación", "Gestión O2C global"]
-    assert len([b for b in app.button if b.label == "→"]) == 3
+    assert [t.label for t in app.text_input] == ["¿Quién debe acceder a VISION?"]
+    assert len([b for b in app.button if b.label == "→"]) == 1
     assert any(b.label == "Acceso O2C" for b in app.button)
 
 
@@ -91,13 +88,12 @@ def test_ana_feliu_enters_dedicated_global_role_with_every_stage():
 
 @pytest.mark.parametrize("typed", ["ana feliu", "Ana", "Ana Feliu X", ""])
 def test_ana_feliu_requires_her_exact_name(typed):
-    app = _enter(_app(["Ana"], ["Norte"], ["E1"]), "o2c_manager", typed)
+    app = _enter(_app(["Bea"], ["Norte"], ["E1"]), "o2c_manager", typed)
     assert rs.ROLE_KEY not in app.session_state
 
 
-@pytest.mark.parametrize("kind", ["commercial", "manager"])
-def test_unknown_name_is_rejected_without_fallback_identity(kind):
-    app = _enter(_app(["Ana"], ["Norte"], ["E1"]), kind, "Inventado")
+def test_unknown_name_is_rejected_without_fallback_identity():
+    app = _enter(_app(["Ana"], ["Norte"], ["E1"]), "commercial", "Inventado")
     assert rs.ROLE_KEY not in app.session_state
     assert rs.COMMERCIAL_KEY not in app.session_state
     assert rs.DELEGATION_KEY not in app.session_state
@@ -106,7 +102,6 @@ def test_unknown_name_is_rejected_without_fallback_identity(kind):
 
 def test_empty_commercials_and_delegations_never_invent_options_and_keep_o2c():
     app = _app([], [], ["E1"])
-    assert _text(app, "commercial").disabled and _text(app, "manager").disabled
     captions = [c.value for c in app.caption]
     assert "No hay comerciales disponibles." in captions
     assert "No hay delegaciones disponibles." in captions
@@ -135,7 +130,7 @@ def test_manager_exit_clears_every_manager_context():
                 "vision_navigation", "commercial_client", "comment_box::1",
                 rs.ROLE_KEY, rs.DELEGATION_KEY, rs.ENTERED_KEY):
         assert key not in state
-    assert [t.label for t in app.text_input] == ["Comercial", "Delegación", "Gestión O2C global"]
+    assert [t.label for t in app.text_input] == ["¿Quién debe acceder a VISION?"]
     assert all(t.value == "" for t in app.text_input)
 
 
@@ -161,3 +156,15 @@ def test_current_author_for_each_role(monkeypatch):
         assert rs.current_author() == author
     monkeypatch.setattr(rs.st, "session_state", {rs.ROLE_KEY: rs.O2C_MANAGER_ROLE, rs.ENTERED_KEY: True})
     assert rs.entered_o2c_manager() is True and rs.entered_o2c() is False
+
+
+def test_o2c_can_be_typed_in_the_single_search():
+    state = _enter(_app(["Ana"], ["Norte"], ["E1", "E2"]), "commercial", " o2c ").session_state
+    assert state[rs.ROLE_KEY] == rs.O2C_ROLE
+    assert state[rs.O2C_STAGES_KEY] == ["E1", "E2"]
+
+
+def test_name_shared_by_commercial_and_delegation_is_not_guessed():
+    app = _enter(_app(["Norte"], ["Norte"], ["E1"]), "commercial", "Norte")
+    assert rs.ROLE_KEY not in app.session_state
+    assert len(app.error) == 1
