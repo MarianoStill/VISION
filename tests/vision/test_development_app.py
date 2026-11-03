@@ -57,7 +57,15 @@ def isolate_background_work(monkeypatch):
 
 
 def _picker(app):
-    return next(s for s in app.selectbox if str(s.key).startswith("vision_access_picker::"))
+    return next(
+        s for s in app.selectbox if str(s.key).startswith("vision_access_category::")
+    )
+
+
+def _value_picker(app):
+    return next(
+        s for s in app.selectbox if str(s.key).startswith("vision_access_value::")
+    )
 
 
 def _enter_button(app):
@@ -83,7 +91,15 @@ def _settle(app, attempts=80):
 
 
 def _enter_access(app, label, settle=True):
-    _picker(app).set_value(label).run(timeout=60)
+    if label == "O2C":
+        category, value = "O2C", None
+    elif label.endswith(" Manager"):
+        category, value = "Delegación", label.removesuffix(" Manager")
+    else:
+        category, value = "Comercial", label
+    _picker(app).set_value(category).run(timeout=60)
+    if value is not None:
+        _value_picker(app).set_value(value).run(timeout=60)
     _enter_button(app).click().run(timeout=60)
     return _settle(app) if settle else app
 
@@ -120,13 +136,14 @@ def test_initial_screen_asks_who_signs_in_and_hides_data_administration():
 
     assert not app.exception
     assert "Bienvenido a <b>VISION</b>" in _text(app)
-    assert "¿Quién va a iniciar sesión?" in _text(app)
-    assert _picker(app).options == ["O2C", "Administrator"]
+    assert "¿Cómo quieres acceder?" in _text(app)
+    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
     assert _enter_button(app).disabled
     assert not app.file_uploader
     assert not app.segmented_control
     assert not app.pills
     assert not app.toggle
+    assert not any("Administrator" in str(s.options) for s in app.selectbox)
 
 
 def test_commercial_workspace_filters_owner_and_clients_using_lion():
@@ -257,7 +274,7 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
     # La portada no procesa datos: LION y PROOF se preparan solo tras entrar.
     assert not app.exception
     assert lion_calls == []
-    assert _picker(app).options == ["O2C", "Administrator"]
+    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
     app = _enter_access(app, "O2C")
     assert not app.exception
     assert len(lion_calls) == 1
@@ -267,7 +284,9 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
     assert Path(ingestion_calls[0][1]).resolve() == sap_file.parent.resolve()
     assert proof_calls == [str(proof_database.resolve())]
     app.button(key="change_profile").click().run(timeout=60)
-    assert _picker(app).options == ["Comercial A", "Comercial B", "O2C", "Administrator"]
+    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
+    _picker(app).set_value("Comercial").run(timeout=60)
+    assert _value_picker(app).options == ["Comercial A", "Comercial B"]
     assert _enter_button(app).disabled
     assert not app.file_uploader
     assert not app.date_input
@@ -289,7 +308,7 @@ def test_automatic_sources_load_lion_and_proof_without_manual_widgets(
 
     app.button(key="change_profile").click().run(timeout=60)
     assert not app.exception
-    assert "¿Quién va a iniciar sesión?" in _text(app)
+    assert "¿Cómo quieres acceder?" in _text(app)
     assert len(lion_calls) == 1
     app = _enter_as(app, "Comercial B")
     assert app.selectbox(key="commercial_client").options[0] == "Todos los clientes"
@@ -376,15 +395,9 @@ def test_manager_scopes_workspace_by_delegation_and_optional_commercial(
     # El catálogo de accesos se publica tras la primera preparación de datos.
     app = _enter_access(app, "O2C")
     app.button(key="change_profile").click().run(timeout=60)
-    assert _picker(app).options == [
-        "Comercial A",
-        "Comercial B",
-        "Comercial C",
-        "Delegación X Manager",
-        "Delegación Y Manager",
-        "O2C",
-        "Administrator",
-    ]
+    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
+    _picker(app).set_value("Delegación").run(timeout=60)
+    assert _value_picker(app).options == ["Delegación X", "Delegación Y"]
     app = _enter_access(app, "Delegación X Manager")
     assert not app.exception
 
@@ -436,7 +449,7 @@ def test_manager_scopes_workspace_by_delegation_and_optional_commercial(
     ).run(timeout=60)
 
     app.button(key="change_profile").click().run(timeout=60)
-    assert "¿Quién va a iniciar sesión?" in _text(app)
+    assert "¿Cómo quieres acceder?" in _text(app)
     assert len(lion_calls) == 1
 
 
@@ -492,7 +505,9 @@ def test_invalid_latest_xlsx_falls_back_to_newest_lion_valid_snapshot(
     assert not app.exception
     assert processed == [b"invalid synthetic workbook", synthetic_sap_xlsx]
     app.button(key="change_profile").click().run(timeout=60)
-    assert _picker(app).options == ["Comercial sintético", "O2C", "Administrator"]
+    assert _picker(app).options == ["Comercial", "Delegación", "O2C"]
+    _picker(app).set_value("Comercial").run(timeout=60)
+    assert _value_picker(app).options == ["Comercial sintético"]
     app = _enter_access(app, "Comercial sintético")
     assert not app.exception
     assert "Mis clientes" in _text(app)
@@ -565,7 +580,8 @@ def test_missing_external_sources_are_reported_in_administration(
     monkeypatch.delenv("CO_VISION_PROOF_REFERENCE_DB", raising=False)
 
     app = AppTest.from_file(str(APP_FILE)).run(timeout=60)
-    app = _enter_access(app, "Administrator", settle=False)
+    app.session_state["admin_data_mode"] = True
+    app.run(timeout=60)
 
     assert not app.exception
     assert any("control de fechas" in item.value for item in app.subheader)
