@@ -33,6 +33,53 @@ def write_signal(root, payload):
     return body["token"]
 
 
+def folder_fingerprint(directory):
+    """Huella de los Excel de la carpeta; ignora temporales de Excel (~$)."""
+    folder = Path(directory)
+    try:
+        entries = [p for p in folder.iterdir()
+                   if p.is_file() and p.suffix.casefold() == ".xlsx"
+                   and not p.name.startswith("~$")]
+    except OSError:
+        return ()
+    items = []
+    for path in sorted(entries):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        items.append((path.name, stat.st_size, stat.st_mtime_ns))
+    return tuple(items)
+
+
+def watch_folder(sources=None, interval=30, settle=60, log=print, stop=lambda: False):
+    """Vigila sap/daily; actualiza cuando la huella cambia y se mantiene estable `settle` s."""
+    from vision.data_sources import resolve_external_sources
+
+    sources = sources or resolve_external_sources()
+    daily = sources["sap_daily_dir"]
+    done = folder_fingerprint(daily)
+    if read_token(sources["root"]) is None:
+        done = None
+    pending, since = None, 0.0
+    while not stop():
+        current = folder_fingerprint(daily)
+        if current != done:
+            if current != pending:
+                pending, since = current, time.monotonic()
+            elif time.monotonic() - since >= settle:
+                try:
+                    report = run_daily_update(sources)
+                    log(f"Actualizado: {report['added']} añadidas, {report['snapshot']}")
+                    done = current
+                except Exception as exc:
+                    log(f"Actualización fallida: {type(exc).__name__}: {exc}")
+                    # Un bloqueo requiere corregir la carpeta, lo que cambia la huella.
+                    done = current
+                    pending, since = None, 0.0
+        time.sleep(interval)
+
+
 def run_daily_update(sources=None, reference_date=None):
     """Ejecuta los pasos en orden; un fallo detiene la señal para no publicar datos a medias."""
     import proof

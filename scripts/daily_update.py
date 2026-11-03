@@ -15,7 +15,15 @@ for source in (ROOT / "apps" / "vision" / "src", ROOT / "modules" / "proof" / "s
 
 
 def main() -> int:
-    from vision.daily_update import run_daily_update
+    from vision.daily_update import run_daily_update, watch_folder
+
+    if "--watch" in sys.argv:
+        print("Vigilando la carpeta de Excel (Ctrl+C para salir)…", flush=True)
+        try:
+            watch_folder(log=lambda m: print(m, flush=True))
+        except KeyboardInterrupt:
+            return 0
+        return 0
 
     try:
         report = run_daily_update()
