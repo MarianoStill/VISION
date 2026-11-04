@@ -2,9 +2,19 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+BUILD_WORKFLOW = (
+    ROOT / ".github" / "workflows" / "main_vision-dev-still.yml"
+).read_text(encoding="utf-8")
 WORKFLOW = (ROOT / ".github" / "workflows" / "deploy-dev.yml").read_text(encoding="utf-8")
 BICEP = (ROOT / "deploy" / "azure" / "main.bicep").read_text(encoding="utf-8")
 STARTUP = (ROOT / "deploy" / "azure" / "startup.sh").read_text(encoding="utf-8")
+
+
+def test_legacy_build_exports_locked_runtime_dependencies():
+    assert "astral-sh/setup-uv@" in BUILD_WORKFLOW
+    assert "uv export --locked --extra vision --extra lion --extra proof" in BUILD_WORKFLOW
+    assert "--no-emit-project --format requirements-txt --output-file requirements.txt" in BUILD_WORKFLOW
+    assert "pip install -r requirements.txt" in BUILD_WORKFLOW
 
 
 def test_deploy_workflow_is_manual_fail_closed_and_secretless():
